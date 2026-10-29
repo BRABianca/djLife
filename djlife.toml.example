@@ -37,3 +37,24 @@ rekordbox_db = ""
 serato_db = ""
 # Pasta _Serato_ legada (fallback para localizar master.sqlite).
 serato_dir = ""
+
+[analysis]
+# Backend de análise de áudio do comando `analyze`.
+# librosa  = roda nativo no Windows (extra `analysis`).
+# essentia = mais preciso, sem wheel para Windows (extra `essentia`, Linux/WSL2/Docker).
+backend = "librosa"
+# fast = analisa apenas os primeiros `fast_seconds` (triagem rápida).
+fast = false
+fast_seconds = 90.0
+
+[ml]
+# Backend de embeddings (camada L3) usado por `embed`/`neighbors`.
+# clap = CLAP via transformers; roda em CPU (extra `ml`).
+backend = "clap"
+# ID do modelo no HuggingFace (vazio = padrão laion/clap-htsat-unfused).
+model = ""
+# Segundos de áudio usados por faixa (vazio = faixa inteira).
+window_seconds = 30.0
+# k-NN: vizinhos considerados e similaridade mínima de cosseno.
+neighbors = 10
+min_similarity = 0.6

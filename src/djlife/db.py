@@ -6,7 +6,7 @@ from pathlib import Path
 from platformdirs import user_data_dir
 
 APP_NAME = "djlife"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def default_db_path() -> Path:

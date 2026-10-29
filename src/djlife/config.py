@@ -4,7 +4,11 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from djlife.analysis.base import BACKENDS as ANALYSIS_BACKENDS
+from djlife.analysis.base import DEFAULT_FAST_SECONDS
 from djlife.db import default_db_path
+from djlife.ml.base import DEFAULT_MIN_SIMILARITY, DEFAULT_NEIGHBORS
+from djlife.ml.base import EMBEDDERS as ML_EMBEDDERS
 
 DEFAULT_EXTENSIONS = ("mp3", "flac", "m4a", "aiff", "wav", "ogg", "opus")
 FILE_STRATEGIES = ("hardlink", "move", "tag_only")
@@ -49,12 +53,30 @@ class IntegrationsConfig:
 
 
 @dataclass(frozen=True)
+class AnalysisConfig:
+    backend: str = "librosa"
+    fast: bool = False
+    fast_seconds: float = DEFAULT_FAST_SECONDS
+
+
+@dataclass(frozen=True)
+class MlConfig:
+    backend: str = "clap"
+    model: str | None = None
+    window_seconds: float | None = None
+    neighbors: int = DEFAULT_NEIGHBORS
+    min_similarity: float = DEFAULT_MIN_SIMILARITY
+
+
+@dataclass(frozen=True)
 class Config:
     library: LibraryConfig = field(default_factory=LibraryConfig)
     catalog: CatalogConfig = field(default_factory=CatalogConfig)
     classification: ClassificationConfig = field(default_factory=ClassificationConfig)
     files: FilesConfig = field(default_factory=FilesConfig)
     integrations: IntegrationsConfig = field(default_factory=IntegrationsConfig)
+    analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
+    ml: MlConfig = field(default_factory=MlConfig)
 
     @property
     def db_path(self) -> Path:
@@ -86,11 +108,25 @@ def load_config(path: Path | str | None = None) -> Config:
     classification = data.get("classification", {})
     files = data.get("files", {})
     integrations = data.get("integrations", {})
+    analysis = data.get("analysis", {})
+    ml = data.get("ml", {})
 
     strategy = files.get("strategy", FilesConfig.strategy)
     if strategy not in FILE_STRATEGIES:
         raise ValueError(
             f"files.strategy inválido: {strategy!r}. Use um de {', '.join(FILE_STRATEGIES)}."
+        )
+
+    backend = analysis.get("backend", AnalysisConfig.backend)
+    if backend not in ANALYSIS_BACKENDS:
+        raise ValueError(
+            f"analysis.backend inválido: {backend!r}. Use um de {', '.join(ANALYSIS_BACKENDS)}."
+        )
+
+    ml_backend = ml.get("backend", MlConfig.backend)
+    if ml_backend not in ML_EMBEDDERS:
+        raise ValueError(
+            f"ml.backend inválido: {ml_backend!r}. Use um de {', '.join(ML_EMBEDDERS)}."
         )
 
     return Config(
@@ -123,5 +159,19 @@ def load_config(path: Path | str | None = None) -> Config:
             rekordbox_db=_optional_path(integrations.get("rekordbox_db")),
             serato_db=_optional_path(integrations.get("serato_db")),
             serato_dir=_optional_path(integrations.get("serato_dir")),
+        ),
+        analysis=AnalysisConfig(
+            backend=backend,
+            fast=bool(analysis.get("fast", AnalysisConfig.fast)),
+            fast_seconds=float(analysis.get("fast_seconds", DEFAULT_FAST_SECONDS)),
+        ),
+        ml=MlConfig(
+            backend=ml_backend,
+            model=ml.get("model"),
+            window_seconds=(
+                float(ml["window_seconds"]) if ml.get("window_seconds") is not None else None
+            ),
+            neighbors=int(ml.get("neighbors", DEFAULT_NEIGHBORS)),
+            min_similarity=float(ml.get("min_similarity", DEFAULT_MIN_SIMILARITY)),
         ),
     )

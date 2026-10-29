@@ -65,6 +65,17 @@ CREATE TABLE IF NOT EXISTS audio_analysis (
     UNIQUE (file_id, analyzer, analysis_version)
 );
 
+CREATE TABLE IF NOT EXISTS embeddings (
+    file_id       INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    model         TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    dim           INTEGER NOT NULL,
+    vector        BLOB NOT NULL,
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (file_id, model, model_version)
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model, model_version);
+
 CREATE TABLE IF NOT EXISTS track_genres (
     id         INTEGER PRIMARY KEY,
     track_id   INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
