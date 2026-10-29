@@ -1,5 +1,6 @@
 import sqlite3
 
+import pytest
 from typer.testing import CliRunner
 
 from djlife import __version__, db
@@ -30,6 +31,9 @@ def test_help_flag() -> None:
     assert "status" in result.stdout
     assert "relink" in result.stdout
     assert "ui" in result.stdout
+    assert "analyze" in result.stdout
+    assert "embed" in result.stdout
+    assert "neighbors" in result.stdout
 
 
 def test_scan_command(tmp_path, make_wav) -> None:
@@ -320,3 +324,140 @@ def test_ui_command_starts_server(monkeypatch, tmp_path, make_wav) -> None:
     assert result.exit_code == 0
     assert captured == {"host": "127.0.0.1", "port": 9090, "open_browser": False}
     assert "Interface djLife" in result.stdout
+
+
+def test_analyze_invalid_backend(tmp_path, make_wav) -> None:
+    config = _scanned_library(tmp_path, make_wav)
+    result = runner.invoke(app, ["analyze", "--backend", "traktor", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "backend invalido" in result.stdout
+
+
+def test_analyze_dry_run(tmp_path, make_wav) -> None:
+    pytest.importorskip("librosa")
+    config = _scanned_library(tmp_path, make_wav)
+    db_path = tmp_path / "catalog.db"
+
+    result = runner.invoke(app, ["analyze", "--config", str(config)])
+    assert result.exit_code == 0
+    assert "Analyze - librosa" in result.stdout
+    assert "Pendentes" in result.stdout
+
+    conn = db.open_catalog(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM audio_analysis").fetchone()[0] == 0
+    conn.close()
+
+
+def test_analyze_apply_persists(tmp_path, make_wav) -> None:
+    pytest.importorskip("librosa")
+    config = _scanned_library(tmp_path, make_wav)
+    db_path = tmp_path / "catalog.db"
+
+    result = runner.invoke(app, ["analyze", "--apply", "--config", str(config)])
+    assert result.exit_code == 0
+    assert "Analyze - librosa" in result.stdout
+
+    conn = db.open_catalog(db_path)
+    rows = conn.execute("SELECT analyzer, analysis_version FROM audio_analysis").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["analyzer"] == "librosa"
+    conn.close()
+
+
+def test_embed_invalid_backend(tmp_path, make_wav) -> None:
+    config = _scanned_library(tmp_path, make_wav)
+    result = runner.invoke(app, ["embed", "--backend", "musicnn", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "embedder invalido" in result.stdout
+
+
+def test_embed_dry_run(tmp_path, make_wav) -> None:
+    config = _scanned_library(tmp_path, make_wav)
+    db_path = tmp_path / "catalog.db"
+
+    result = runner.invoke(app, ["embed", "--config", str(config)])
+    assert result.exit_code == 0
+    assert "Embed - clap" in result.stdout
+    assert "Pendentes" in result.stdout
+
+    conn = db.open_catalog(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0] == 0
+    conn.close()
+
+
+def test_embed_apply_without_extra(monkeypatch, tmp_path, make_wav) -> None:
+    from djlife.ml.base import EmbeddingUnavailable
+
+    config = _scanned_library(tmp_path, make_wav)
+
+    def boom(name, *, model=None, window_seconds=None):
+        raise EmbeddingUnavailable("torch nao esta instalado. Instale o extra.")
+
+    monkeypatch.setattr("djlife.cli.load_embedder", boom)
+    result = runner.invoke(app, ["embed", "--apply", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "extra" in result.stdout
+
+
+def _pair_library(tmp_path, make_wav):
+    library = tmp_path / "lib"
+    make_wav(library / "a.wav")
+    make_wav(library / "b.wav")
+    db_path = tmp_path / "catalog.db"
+    config = tmp_path / "djlife.toml"
+    config.write_text(
+        f'[library]\nroots = ["{library.as_posix()}"]\n[catalog]\npath = "{db_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    assert runner.invoke(app, ["scan", "--config", str(config)]).exit_code == 0
+    return config, db_path
+
+
+def _seed_embeddings(db_path, vectors):
+    from djlife.ml import vectors as vectors_mod
+    from djlife.ml.clap_backend import version_for
+
+    conn = db.open_catalog(db_path)
+    conn.execute("INSERT INTO genres(slug, name, level) VALUES ('house', 'House', 0)")
+    house_id = int(conn.execute("SELECT id FROM genres WHERE slug = 'house'").fetchone()[0])
+    track_ids = [int(row["id"]) for row in conn.execute("SELECT id FROM tracks ORDER BY id")]
+    conn.execute(
+        "INSERT INTO track_genres(track_id, genre_id, source, confidence, score, created_at)"
+        " VALUES (?, ?, 'tags', 'A', NULL, 'now')",
+        (track_ids[0], house_id),
+    )
+    file_ids = [int(row["id"]) for row in conn.execute("SELECT id FROM files ORDER BY id")]
+    for file_id, vector in zip(file_ids, vectors, strict=True):
+        conn.execute(
+            "INSERT INTO embeddings(file_id, model, model_version, dim, vector, created_at)"
+            " VALUES (?, 'clap', ?, ?, ?, 'now')",
+            (file_id, version_for(None), len(vector), vectors_mod.pack(vector)),
+        )
+    conn.commit()
+    conn.close()
+    return house_id
+
+
+def test_neighbors_dry_run(tmp_path, make_wav) -> None:
+    config, _ = _pair_library(tmp_path, make_wav)
+    result = runner.invoke(app, ["neighbors", "--config", str(config)])
+    assert result.exit_code == 0
+    assert "Neighbors - clap" in result.stdout
+    assert "Propostas" in result.stdout
+
+
+def test_neighbors_apply_writes_proposals(tmp_path, make_wav) -> None:
+    config, db_path = _pair_library(tmp_path, make_wav)
+    _seed_embeddings(db_path, [(1.0, 0.0, 0.0), (0.9, 0.1, 0.0)])
+
+    result = runner.invoke(app, ["neighbors", "--apply", "--config", str(config)])
+    assert result.exit_code == 0
+    assert "Propostas gravadas" in result.stdout
+
+    conn = db.open_catalog(db_path)
+    rows = conn.execute(
+        "SELECT track_id, source FROM track_genres WHERE source = 'embedding'"
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "embedding"
