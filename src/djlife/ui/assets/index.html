@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DJLIFE // console</title>
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="glyph">&gt;_</span>
+      <h1 class="glitch" data-text="DJLIFE">DJLIFE</h1>
+      <span class="tag">catalog console</span>
+    </div>
+    <div class="meta">
+      <span class="chip" id="meta-app">v--</span>
+      <span class="chip" id="meta-schema">schema --</span>
+      <span class="chip" id="meta-catalog" title="catalogo">catalogo: --</span>
+      <span class="chip signal" id="meta-status">aguardando</span>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab is-active" data-view="overview">visao geral</button>
+    <button class="tab" data-view="library">biblioteca</button>
+    <button class="tab" data-view="duplicates">duplicatas</button>
+    <button class="tab" data-view="versions">versoes</button>
+    <button class="tab" data-view="integrations">integracoes</button>
+    <button class="tab" data-view="manual">manual</button>
+  </nav>
+
+  <main>
+    <div class="banner hidden" id="banner" role="alert"></div>
+
+    <section class="view is-active" id="view-overview">
+      <div class="view-head">
+        <h2>visao geral</h2>
+        <p>Panorama do catalogo SQLite: cobertura, classificacao, duplicatas e versoes.</p>
+      </div>
+      <div class="grid cards" id="overview-cards"></div>
+      <div class="grid two">
+        <div class="panel">
+          <h3>cobertura de metadados</h3>
+          <div class="bars" id="overview-coverage"></div>
+        </div>
+        <div class="panel">
+          <h3>distribuicao por extensao</h3>
+          <div class="bars" id="overview-extensions"></div>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="panel">
+          <h3>generos mais frequentes</h3>
+          <div class="bars" id="overview-genres"></div>
+        </div>
+        <div class="panel">
+          <h3>duplicatas por nivel</h3>
+          <div class="bars" id="overview-dups"></div>
+          <div class="kv" id="overview-extra"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-library">
+      <div class="view-head">
+        <h2>biblioteca</h2>
+        <p>Busca textual por titulo, artista, album ou caminho no catalogo.</p>
+      </div>
+      <form class="searchbar" id="library-form">
+        <input type="search" id="library-query" placeholder="digite e pressione enter..." autocomplete="off" />
+        <button type="submit" class="btn">buscar</button>
+      </form>
+      <div class="hint" id="library-count"></div>
+      <div class="table-wrap">
+        <table class="table" id="library-table">
+          <thead>
+            <tr>
+              <th>titulo</th><th>artista</th><th>album</th><th>genero</th>
+              <th>bpm</th><th>key</th><th>ext</th><th>dur</th><th>caminho</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="view" id="view-duplicates">
+      <div class="view-head">
+        <h2>duplicatas</h2>
+        <p>Deteccao em tres niveis: hash de conteudo, fingerprint acustico e ISRC/MBID.</p>
+      </div>
+      <div class="chips" id="duplicates-kinds"></div>
+      <div class="stack" id="duplicates-groups"></div>
+    </section>
+
+    <section class="view" id="view-versions">
+      <div class="view-head">
+        <h2>versoes</h2>
+        <p>Classificacao de Original, Extended, Radio, Remix e Bootleg por regras.</p>
+      </div>
+      <div class="panel">
+        <h3>distribuicao</h3>
+        <div class="bars" id="versions-counts"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="versions-table">
+          <thead>
+            <tr><th>caminho</th><th>versao</th><th>fonte</th><th>confianca</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="view" id="view-integrations">
+      <div class="view-head">
+        <h2>integracoes</h2>
+        <p>Integridade dos bancos DJ: quantos itens ainda resolvem para arquivos existentes.</p>
+      </div>
+      <div class="grid cards" id="integrations-cards"></div>
+    </section>
+
+    <section class="view" id="view-manual">
+      <div class="view-head">
+        <h2>manual</h2>
+        <p>O que a ferramenta faz, como classifica e quais garantias de seguranca aplica.</p>
+      </div>
+      <div class="panel">
+        <h3>pipeline de classificacao</h3>
+        <div class="pipeline" id="manual-pipeline"></div>
+      </div>
+      <div class="panel">
+        <h3>comandos da CLI</h3>
+        <div class="commands" id="manual-commands"></div>
+      </div>
+      <div class="panel">
+        <h3>garantias de seguranca</h3>
+        <div class="safe" id="manual-safety"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>djLife // interface local somente leitura</span>
+    <span id="foot-catalog"></span>
+  </footer>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

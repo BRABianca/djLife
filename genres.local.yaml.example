@@ -1,0 +1,25 @@
+# djLife — regras locais de classificacao (L1)
+#
+# Copie para "genres.local.yaml". As regras casam por regex (case-insensitive) sobre
+# title/artist/album/path e escrevem em track_genres com source="rules".
+# `field`: any | title | artist | album | path.  `confidence`: A | B | C (padrao B).
+version: "0.1.0"
+
+rules:
+  - name: Label Anjunadeep
+    field: album
+    match: "anjunadeep"
+    genre: house.deep_house
+    confidence: B
+
+  - name: Extended mix
+    field: title
+    match: "\\bextended\\b"
+    genre: house
+    confidence: C
+
+  - name: Pasta Drum & Bass
+    field: path
+    match: "(?i)\\\\(dnb|drum.?n.?bass)\\\\"
+    genre: drum_and_bass
+    confidence: B

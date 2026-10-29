@@ -1,0 +1,475 @@
+# djLife — taxonomia de gêneros
+#
+# `slug` é o identificador estável (não renomeie sem migração). `name` é o rótulo de
+# exibição. `aliases` são variações reconhecidas nas tags (L0). `discogs`/`beatport`/
+# `musicbrainz` são sementes de mapeamento para resolve futuros (L2+), não exaustivas.
+version: "0.1.0"
+
+genres:
+  - slug: house
+    name: House
+    aliases: [house music, housemusic]
+    discogs: [House]
+    beatport: [House]
+    musicbrainz: [house]
+    children:
+      - slug: house.deep_house
+        name: Deep House
+        aliases: [deephouse, deep]
+        discogs: [Deep House]
+        beatport: [Deep House]
+        musicbrainz: [deep house]
+      - slug: house.tech_house
+        name: Tech House
+        aliases: [techhouse]
+        discogs: [Tech House]
+        beatport: [Tech House]
+        musicbrainz: [tech house]
+      - slug: house.progressive_house
+        name: Progressive House
+        aliases: [proghouse, prog house]
+        discogs: [Progressive House]
+        beatport: [Progressive House]
+        musicbrainz: [progressive house]
+      - slug: house.afro_house
+        name: Afro House
+        aliases: [afrohouse]
+        discogs: [Afro House]
+        beatport: [Afro House]
+        musicbrainz: [afro house]
+      - slug: house.organic_house
+        name: Organic House
+        aliases: [organichouse]
+        discogs: [Organic House]
+        beatport: [Organic House]
+        musicbrainz: [organic house]
+      - slug: house.soulful_house
+        name: Soulful House
+        aliases: [vocal house, soulful]
+        discogs: [Soulful House]
+        beatport: [Soulful House]
+        musicbrainz: [soulful house]
+      - slug: house.minimal_deep_tech
+        name: Minimal / Deep Tech
+        aliases: [minimal, deep tech, minimaldeeptech]
+        discogs: [Minimal]
+        beatport: [Minimal / Deep Tech]
+        musicbrainz: [minimal house]
+      - slug: house.electro_house
+        name: Electro House
+        aliases: [electrohouse]
+        discogs: [Electro House]
+        beatport: [Electro House]
+        musicbrainz: [electro house]
+      - slug: house.bass_house
+        name: Bass House
+        aliases: [basshouse]
+        discogs: [Bass House]
+        beatport: [Bass House]
+        musicbrainz: [bass house]
+      - slug: house.funky_house
+        name: Funky House
+        aliases: [funkyhouse]
+        discogs: [Funky House]
+        beatport: [Funky House]
+        musicbrainz: [funky house]
+
+  - slug: techno
+    name: Techno
+    aliases: [techno music]
+    discogs: [Techno]
+    beatport: [Techno]
+    musicbrainz: [techno]
+    children:
+      - slug: techno.peak_time
+        name: Peak Time Techno
+        aliases: [peaktime, driving techno]
+        discogs: [Techno]
+        beatport: [Techno (Peak Time / Driving)]
+        musicbrainz: [techno]
+      - slug: techno.melodic
+        name: Melodic Techno
+        aliases: [melodic, melodic house]
+        discogs: [Melodic Techno]
+        beatport: [Melodic House & Techno]
+        musicbrainz: [melodic techno]
+      - slug: techno.minimal
+        name: Minimal Techno
+        aliases: [minimaltechno]
+        discogs: [Minimal Techno]
+        beatport: [Minimal / Deep Tech]
+        musicbrainz: [minimal techno]
+      - slug: techno.hard
+        name: Hard Techno
+        aliases: [hardtechno]
+        discogs: [Hard Techno]
+        beatport: [Hard Techno]
+        musicbrainz: [hard techno]
+      - slug: techno.industrial
+        name: Industrial Techno
+        aliases: [industrial]
+        discogs: [Industrial]
+        beatport: [Hard Techno]
+        musicbrainz: [industrial techno]
+      - slug: techno.acid
+        name: Acid Techno
+        aliases: [acid]
+        discogs: [Acid]
+        beatport: [Techno]
+        musicbrainz: [acid techno]
+
+  - slug: trance
+    name: Trance
+    aliases: [trance music]
+    discogs: [Trance]
+    beatport: [Trance]
+    musicbrainz: [trance]
+    children:
+      - slug: trance.progressive
+        name: Progressive Trance
+        aliases: [progtrance, prog trance]
+        discogs: [Progressive Trance]
+        beatport: [Trance (Main Floor)]
+        musicbrainz: [progressive trance]
+      - slug: trance.uplifting
+        name: Uplifting Trance
+        aliases: [uplifting, epic trance]
+        discogs: [Uplifting Trance]
+        beatport: [Trance (Raw / Deep / Uplifting)]
+        musicbrainz: [uplifting trance]
+      - slug: trance.psy
+        name: Psytrance
+        aliases: [psy, psytance, psychedelic trance, psy trance]
+        discogs: [Psy-Trance]
+        beatport: [Psy-Trance]
+        musicbrainz: [psytrance]
+      - slug: trance.tech
+        name: Tech Trance
+        aliases: [techtrance]
+        discogs: [Tech Trance]
+        beatport: [Trance (Main Floor)]
+        musicbrainz: [tech trance]
+
+  - slug: drum_and_bass
+    name: Drum & Bass
+    aliases: [dnb, drumnbass, drum and bass, drum n bass, drumandbass, drum bass]
+    discogs: [Drum n Bass]
+    beatport: [Drum & Bass]
+    musicbrainz: [drum and bass]
+    children:
+      - slug: drum_and_bass.liquid
+        name: Liquid DnB
+        aliases: [liquid, liquid funk]
+        discogs: [Liquid Funk]
+        beatport: [Liquid]
+        musicbrainz: [liquid funk]
+      - slug: drum_and_bass.neurofunk
+        name: Neurofunk
+        aliases: [neuro]
+        discogs: [Neurofunk]
+        beatport: [Neurofunk]
+        musicbrainz: [neurofunk]
+      - slug: drum_and_bass.jungle
+        name: Jungle
+        aliases: [jungle music]
+        discogs: [Jungle]
+        beatport: [Jungle]
+        musicbrainz: [jungle]
+      - slug: drum_and_bass.jump_up
+        name: Jump Up
+        aliases: [jumpup]
+        discogs: [Jump Up]
+        beatport: [Jump Up]
+        musicbrainz: [jump up]
+      - slug: drum_and_bass.halftime
+        name: Halftime
+        aliases: [half time, half-time]
+        discogs: [Halftime]
+        beatport: [Halftime]
+        musicbrainz: [halftime]
+
+  - slug: dubstep_bass
+    name: Dubstep / Bass
+    aliases: [bass music, bassmusic, uk bass]
+    discogs: [Dubstep]
+    beatport: [Dubstep]
+    musicbrainz: [bass music]
+    children:
+      - slug: dubstep_bass.dubstep
+        name: Dubstep
+        aliases: [dub]
+        discogs: [Dubstep]
+        beatport: [Dubstep]
+        musicbrainz: [dubstep]
+      - slug: dubstep_bass.riddim
+        name: Riddim
+        aliases: [riddim dubstep]
+        discogs: [Riddim]
+        beatport: [Riddim]
+        musicbrainz: [riddim]
+      - slug: dubstep_bass.future_bass
+        name: Future Bass
+        aliases: [futurebass]
+        discogs: [Future Bass]
+        beatport: [Future Bass]
+        musicbrainz: [future bass]
+      - slug: dubstep_bass.glitch_hop
+        name: Glitch Hop
+        aliases: [glitchhop, glitch]
+        discogs: [Glitch Hop]
+        beatport: [Glitch Hop]
+        musicbrainz: [glitch hop]
+      - slug: dubstep_bass.wave
+        name: Wave
+        aliases: [wave music]
+        discogs: [Wave]
+        beatport: [Trap / Wave]
+        musicbrainz: [wave]
+
+  - slug: breakbeat
+    name: Breakbeat
+    aliases: [breaks, breakbeat]
+    discogs: [Breakbeat]
+    beatport: [Breaks / Breakbeat / UK Bass]
+    musicbrainz: [breakbeat]
+    children:
+      - slug: breakbeat.breaks
+        name: Breaks
+        aliases: [nu breaks]
+        discogs: [Breaks]
+        beatport: [Breaks / Breakbeat / UK Bass]
+        musicbrainz: [breaks]
+      - slug: breakbeat.big_beat
+        name: Big Beat
+        aliases: [bigbeat]
+        discogs: [Big Beat]
+        beatport: [Breaks / Breakbeat / UK Bass]
+        musicbrainz: [big beat]
+      - slug: breakbeat.hardcore
+        name: Breakbeat Hardcore
+        aliases: [hardcore breaks, rave]
+        discogs: [Breakbeat Hardcore]
+        beatport: [Hard Dance / Hardcore]
+        musicbrainz: [breakbeat hardcore]
+
+  - slug: uk_garage
+    name: UK Garage / Bassline
+    aliases: [ukg, uk garage, garage]
+    discogs: [UK Garage]
+    beatport: [Garage / Bassline / Grime]
+    musicbrainz: [uk garage]
+    children:
+      - slug: uk_garage.two_step
+        name: 2-Step
+        aliases: [2step, two step, 2 step]
+        discogs: [UK Garage]
+        beatport: [UK Garage / Bassline]
+        musicbrainz: [2-step garage]
+      - slug: uk_garage.speed_garage
+        name: Speed Garage
+        aliases: [speedgarage]
+        discogs: [Speed Garage]
+        beatport: [UK Garage / Bassline]
+        musicbrainz: [speed garage]
+      - slug: uk_garage.bassline
+        name: Bassline
+        aliases: [niche]
+        discogs: [Bassline]
+        beatport: [Bassline]
+        musicbrainz: [bassline]
+      - slug: uk_garage.future_garage
+        name: Future Garage
+        aliases: [futuregarage]
+        discogs: [Future Garage]
+        beatport: [Garage / Bassline / Grime]
+        musicbrainz: [future garage]
+      - slug: uk_garage.grime
+        name: Grime
+        aliases: [grime music]
+        discogs: [Grime]
+        beatport: [Grime]
+        musicbrainz: [grime]
+
+  - slug: disco_funk
+    name: Disco / Funk
+    aliases: [disco music, funk music]
+    discogs: [Disco]
+    beatport: [Nu Disco / Disco]
+    musicbrainz: [disco]
+    children:
+      - slug: disco_funk.nu_disco
+        name: Nu-Disco
+        aliases: [nudisco, nu disco]
+        discogs: [Nu-Disco]
+        beatport: [Nu Disco / Disco]
+        musicbrainz: [nu disco]
+      - slug: disco_funk.boogie
+        name: Boogie
+        aliases: [boogie funk]
+        discogs: [Boogie]
+        beatport: [Nu Disco / Disco]
+        musicbrainz: [boogie]
+      - slug: disco_funk.funk
+        name: Funk
+        aliases: [funk music]
+        discogs: [Funk]
+        beatport: [Funk / Soul]
+        musicbrainz: [funk]
+      - slug: disco_funk.electro
+        name: Electro
+        aliases: [electrofunk, electro funk]
+        discogs: [Electro]
+        beatport: [Electro (Classic / Detroit / Modern)]
+        musicbrainz: [electro]
+      - slug: disco_funk.indie_dance
+        name: Indie Dance
+        aliases: [indiedance]
+        discogs: [Indie Dance]
+        beatport: [Indie Dance]
+        musicbrainz: [indie dance]
+
+  - slug: hip_hop_rnb
+    name: Hip-Hop / R&B
+    aliases: [hiphop, hip hop, rap, rnb, r&b]
+    discogs: [Hip Hop]
+    beatport: [Hip-Hop / R&B]
+    musicbrainz: [hip hop]
+    children:
+      - slug: hip_hop_rnb.hip_hop
+        name: Hip-Hop
+        aliases: [hiphop, rap]
+        discogs: [Hip Hop]
+        beatport: [Hip-Hop / R&B]
+        musicbrainz: [hip hop]
+      - slug: hip_hop_rnb.trap
+        name: Trap
+        aliases: [trap music]
+        discogs: [Trap]
+        beatport: [Trap / Wave]
+        musicbrainz: [trap]
+      - slug: hip_hop_rnb.rnb
+        name: R&B
+        aliases: [rnb, soul]
+        discogs: [RnB/Swing]
+        beatport: [Hip-Hop / R&B]
+        musicbrainz: [contemporary r&b]
+      - slug: hip_hop_rnb.turntablism
+        name: Turntablism
+        aliases: [scratch, turntablism]
+        discogs: [Turntablism]
+        beatport: [Hip-Hop / R&B]
+        musicbrainz: [turntablism]
+
+  - slug: pop_dance
+    name: Pop / Dance
+    aliases: [pop music, dance music, edm, big room]
+    discogs: [Dance-pop]
+    beatport: [Dance / Pop]
+    musicbrainz: [dance pop]
+    children:
+      - slug: pop_dance.dance_pop
+        name: Dance Pop
+        aliases: [dancepop]
+        discogs: [Dance-pop]
+        beatport: [Dance / Pop]
+        musicbrainz: [dance pop]
+      - slug: pop_dance.edm
+        name: EDM
+        aliases: [edm, bigroom, big room]
+        discogs: [EDM]
+        beatport: [Dance / Pop]
+        musicbrainz: [edm]
+      - slug: pop_dance.electro_pop
+        name: Electro Pop
+        aliases: [electropop, synthpop]
+        discogs: [Synth-pop]
+        beatport: [Dance / Pop]
+        musicbrainz: [electropop]
+      - slug: pop_dance.future_house
+        name: Future House
+        aliases: [futurehouse]
+        discogs: [Future House]
+        beatport: [Future House]
+        musicbrainz: [future house]
+
+  - slug: latin_afro
+    name: Latin / Afro
+    aliases: [latin, afro, latin music]
+    discogs: [Latin]
+    beatport: [Latin / Afro House]
+    musicbrainz: [latin]
+    children:
+      - slug: latin_afro.reggaeton
+        name: Reggaeton
+        aliases: [reggaetón, reggaeton]
+        discogs: [Reggaeton]
+        beatport: [Reggaeton]
+        musicbrainz: [reggaeton]
+      - slug: latin_afro.latin_house
+        name: Latin House
+        aliases: [latinhouse]
+        discogs: [Latin House]
+        beatport: [Latin / Afro House]
+        musicbrainz: [latin house]
+      - slug: latin_afro.moombahton
+        name: Moombahton
+        aliases: [moombah]
+        discogs: [Moombahton]
+        beatport: [Moombahton]
+        musicbrainz: [moombahton]
+      - slug: latin_afro.afrobeat
+        name: Afrobeat
+        aliases: [afrobeats]
+        discogs: [Afrobeat]
+        beatport: [Afro House]
+        musicbrainz: [afrobeat]
+      - slug: latin_afro.amapiano
+        name: Amapiano
+        aliases: [amapiano]
+        discogs: [Amapiano]
+        beatport: [Amapiano]
+        musicbrainz: [amapiano]
+      - slug: latin_afro.baile_funk
+        name: Baile Funk
+        aliases: [funk carioca, bailefunk]
+        discogs: [Baile Funk]
+        beatport: [Baile Funk]
+        musicbrainz: [funk carioca]
+
+  - slug: ambient_downtempo
+    name: Ambient / Downtempo
+    aliases: [chill, chillout]
+    discogs: [Ambient]
+    beatport: [Organic House / Downtempo]
+    musicbrainz: [ambient]
+    children:
+      - slug: ambient_downtempo.ambient
+        name: Ambient
+        aliases: [ambient music]
+        discogs: [Ambient]
+        beatport: [Organic House / Downtempo]
+        musicbrainz: [ambient]
+      - slug: ambient_downtempo.downtempo
+        name: Downtempo
+        aliases: [down tempo]
+        discogs: [Downtempo]
+        beatport: [Organic House / Downtempo]
+        musicbrainz: [downtempo]
+      - slug: ambient_downtempo.chillout
+        name: Chillout
+        aliases: [chill out]
+        discogs: [Chillout]
+        beatport: [Organic House / Downtempo]
+        musicbrainz: [chillout]
+      - slug: ambient_downtempo.trip_hop
+        name: Trip-Hop
+        aliases: [triphop, trip hop]
+        discogs: [Trip Hop]
+        beatport: [Organic House / Downtempo]
+        musicbrainz: [trip hop]
+      - slug: ambient_downtempo.lofi
+        name: Lo-Fi
+        aliases: [lofi, lo fi]
+        discogs: [Lo-Fi]
+        beatport: [Organic House / Downtempo]
+        musicbrainz: [lo-fi]

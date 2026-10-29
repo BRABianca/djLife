@@ -1,0 +1,39 @@
+schema_version = 3
+
+[library]
+# Raízes varridas pelo scanner.
+roots = ["D:/Music"]
+extensions = ["mp3", "flac", "m4a", "aiff", "wav", "ogg", "opus"]
+follow_symlinks = false
+
+[catalog]
+# Caminho do SQLite. Vazio = usa o diretório de dados do usuário.
+path = ""
+hash_algorithm = "blake2b"
+hash_files = true
+
+[classification]
+taxonomy = "genres.yaml"
+local_taxonomy = "genres.local.yaml"
+enable = ["tags", "rules"]
+
+[files]
+# hardlink = árvore organizada sem tocar nos originais (Seguro).
+# move     = reorganiza os arquivos e atualiza o catálogo.
+# tag_only = apenas grava tags DJLIFE_*, sem mexer em pastas.
+strategy = "hardlink"
+# Destino da árvore organizada (obrigatório para `plan`/`apply`).
+target = "D:/Music/Organizado"
+# Destino da quarentena de duplicatas (obrigatório para `dedupe --apply`).
+quarantine_dir = "D:/Music/_Quarentena"
+template = "{genre}/{subgenre}/{artist} - {title}"
+unknown_dir = "_NaoClassificado"
+
+[integrations]
+dj_software = ["rekordbox", "serato"]
+# Rekordbox 6/7: master.db (SQLCipher) — relink requer o extra `rekordbox`.
+rekordbox_db = ""
+# Serato DJ 4.x: master.sqlite (SQLite/WAL). Usado por `status`/`relink`.
+serato_db = ""
+# Pasta _Serato_ legada (fallback para localizar master.sqlite).
+serato_dir = ""
