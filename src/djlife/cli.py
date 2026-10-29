@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.progress import Progress
 from rich.table import Table
 
 from djlife import (
@@ -23,6 +24,14 @@ from djlife import (
 )
 from djlife import apply as apply_mod
 from djlife import config as config_mod
+from djlife.analysis.base import AnalysisUnavailable
+from djlife.analysis.runner import (
+    AnalyzePlan,
+    AnalyzeResult,
+    apply_plan,
+    build_plan,
+    load_analyzer,
+)
 from djlife.integrations import base as integrations_base
 from djlife.integrations import rekordbox as rekordbox_int
 from djlife.integrations import serato as serato_int
@@ -35,6 +44,18 @@ from djlife.integrations.base import (
     relink_plan,
     resolve_move_mapping,
 )
+from djlife.ml.base import EmbeddingUnavailable
+from djlife.ml.neighbors import (
+    NeighborPlan,
+    NeighborResult,
+)
+from djlife.ml.neighbors import (
+    apply_plan as apply_neighbor_plan,
+)
+from djlife.ml.neighbors import build_plan as build_neighbor_plan
+from djlife.ml.runner import EmbedPlan, EmbedResult, embedder_version, load_embedder
+from djlife.ml.runner import apply_plan as apply_embed_plan
+from djlife.ml.runner import build_plan as build_embed_plan
 from djlife.ui import server as ui_server
 
 app = typer.Typer(
@@ -532,6 +553,308 @@ def versions_cmd(
 
 
 app.command(name="versions")(versions_cmd)
+
+
+def _print_analyze_plan(plan: AnalyzePlan, preview: int) -> None:
+    summary = Table(title=f"Analyze - {plan.analyzer} ({plan.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Arquivos", str(plan.files))
+    summary.add_row("Ja analisados", str(plan.analyzed))
+    summary.add_row("Pendentes", str(plan.pending))
+    console.print(summary)
+
+    if preview > 0 and plan.candidates:
+        shown = plan.candidates[:preview]
+        table = Table(title=f"Previa ({len(shown)} de {plan.pending})")
+        table.add_column("Arquivo")
+        for candidate in shown:
+            table.add_row(candidate.path)
+        console.print(table)
+
+
+def _print_analyze_result(result: AnalyzeResult) -> None:
+    summary = Table(title=f"Analyze - {result.analyzer} ({result.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Analisados", str(result.analyzed))
+    summary.add_row("Falhas", str(result.failed))
+    console.print(summary)
+
+    if result.errors:
+        table = Table(title=f"Falhas ({min(len(result.errors), 10)} de {len(result.errors)})")
+        table.add_column("Arquivo")
+        table.add_column("Motivo")
+        for path, message in result.errors[:10]:
+            table.add_row(path, message)
+        console.print(table)
+        console.print("[dim]Falhas registradas em scan_errors.[/dim]")
+
+
+@app.command()
+def analyze(
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", "-b", help="librosa ou essentia (padrao: analysis.backend)."),
+    ] = None,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Executa a analise e grava em audio_analysis.")
+    ] = False,
+    fast: Annotated[
+        bool, typer.Option("--fast", help="Analisa so o inicio da faixa (triagem rapida).")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Reanalisa arquivos ja analisados.")
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Maximo de arquivos analisados.")
+    ] = None,
+    preview: Annotated[
+        int, typer.Option("--preview", help="Itens exibidos na previa.")
+    ] = 20,
+    config: Annotated[
+        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
+    ] = Path("djlife.toml"),
+) -> None:
+    """Extrai BPM e tonalidade (Camelot/Open Key) para audio_analysis (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    name = backend or cfg.analysis.backend
+    try:
+        analyzer = load_analyzer(
+            name, fast=fast or cfg.analysis.fast, fast_seconds=cfg.analysis.fast_seconds
+        )
+    except (AnalysisUnavailable, ValueError) as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    plan = build_plan(conn, analyzer, limit=limit, force=force)
+    _print_analyze_plan(plan, preview)
+    if not apply:
+        conn.close()
+        return
+    if plan.pending == 0:
+        conn.close()
+        console.print("[yellow]Nada a analisar.[/yellow]")
+        return
+
+    with Progress(console=console) as progress:
+        task_id = progress.add_task(f"Analisando com {analyzer.name}", total=plan.pending)
+
+        def tick(index: int, total: int, path: str) -> None:
+            progress.update(task_id, advance=1, description=f"{index}/{total} {Path(path).name}")
+
+        result = apply_plan(conn, plan, analyzer, on_progress=tick)
+
+    conn.close()
+    _print_analyze_result(result)
+
+
+def _print_embed_plan(plan: EmbedPlan, preview: int) -> None:
+    summary = Table(title=f"Embed - {plan.embedder} ({plan.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Arquivos", str(plan.files))
+    summary.add_row("Ja embeddados", str(plan.embedded))
+    summary.add_row("Pendentes", str(plan.pending))
+    console.print(summary)
+
+    if preview > 0 and plan.candidates:
+        shown = plan.candidates[:preview]
+        table = Table(title=f"Previa ({len(shown)} de {plan.pending})")
+        table.add_column("Arquivo")
+        for candidate in shown:
+            table.add_row(candidate.path)
+        console.print(table)
+
+
+def _print_embed_result(result: EmbedResult) -> None:
+    summary = Table(title=f"Embed - {result.embedder} ({result.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Embeddados", str(result.embedded))
+    summary.add_row("Falhas", str(result.failed))
+    console.print(summary)
+
+    if result.errors:
+        table = Table(title=f"Falhas ({min(len(result.errors), 10)} de {len(result.errors)})")
+        table.add_column("Arquivo")
+        table.add_column("Motivo")
+        for path, message in result.errors[:10]:
+            table.add_row(path, message)
+        console.print(table)
+        console.print("[dim]Falhas registradas em scan_errors.[/dim]")
+
+
+@app.command()
+def embed(
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", "-b", help="clap (padrao: ml.backend)."),
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="ID do modelo (padrao: ml.model).")
+    ] = None,
+    window: Annotated[
+        float | None,
+        typer.Option("--window", help="Segundos de audio usados (padrao: ml.window_seconds)."),
+    ] = None,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Calcula os embeddings e grava em embeddings.")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Recalcula arquivos ja embeddados.")
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Maximo de arquivos processados.")
+    ] = None,
+    preview: Annotated[
+        int, typer.Option("--preview", help="Itens exibidos na previa.")
+    ] = 20,
+    config: Annotated[
+        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
+    ] = Path("djlife.toml"),
+) -> None:
+    """Calcula embeddings de audio (camada L3) para o catalogo (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    name = backend or cfg.ml.backend
+    chosen_model = model or cfg.ml.model
+    window_seconds = window if window is not None else cfg.ml.window_seconds
+    try:
+        version = embedder_version(name, chosen_model)
+    except ValueError as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    plan = build_embed_plan(conn, name, version, limit=limit, force=force)
+    _print_embed_plan(plan, preview)
+    if not apply:
+        conn.close()
+        return
+    if plan.pending == 0:
+        conn.close()
+        console.print("[yellow]Nada a embeddar.[/yellow]")
+        return
+
+    try:
+        embedder = load_embedder(name, model=chosen_model, window_seconds=window_seconds)
+    except (EmbeddingUnavailable, ValueError) as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    with Progress(console=console) as progress:
+        task_id = progress.add_task(f"Embeddando com {embedder.name}", total=plan.pending)
+
+        def tick(index: int, total: int, path: str) -> None:
+            progress.update(task_id, advance=1, description=f"{index}/{total} {Path(path).name}")
+
+        result = apply_embed_plan(conn, plan, embedder, on_progress=tick)
+
+    conn.close()
+    _print_embed_result(result)
+
+
+def _print_neighbor_plan(plan: NeighborPlan, preview: int) -> None:
+    summary = Table(title=f"Neighbors - {plan.model} ({plan.model_version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Embeddados", str(plan.embedded))
+    summary.add_row("Rotulados (ref)", str(plan.labeled))
+    summary.add_row("Alvos", str(plan.targets))
+    summary.add_row("Propostas", str(plan.pending))
+    console.print(summary)
+
+    if preview > 0 and plan.proposals:
+        shown = plan.proposals[:preview]
+        table = Table(title=f"Propostas ({len(shown)} de {plan.pending})")
+        table.add_column("Faixa", justify="right")
+        table.add_column("Genero")
+        table.add_column("Confianca")
+        table.add_column("Score", justify="right")
+        table.add_column("Vizinhos", justify="right")
+        for proposal in shown:
+            table.add_row(
+                str(proposal.track_id),
+                proposal.genre,
+                proposal.confidence,
+                f"{proposal.score:.2f}",
+                str(proposal.neighbors),
+            )
+        console.print(table)
+
+
+def _print_neighbor_result(result: NeighborResult) -> None:
+    summary = Table(title="Neighbors")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Propostas gravadas", str(result.written))
+    summary.add_row("Ignoradas (ja existiam)", str(result.skipped))
+    console.print(summary)
+
+
+@app.command()
+def neighbors(
+    k: Annotated[
+        int | None, typer.Option("--k", help="Vizinhos por faixa (padrao: ml.neighbors).")
+    ] = None,
+    min_similarity: Annotated[
+        float | None,
+        typer.Option("--min-similarity", help="Similaridade minima (padrao: ml.min_similarity)."),
+    ] = None,
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", "-b", help="clap (padrao: ml.backend)."),
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="ID do modelo (padrao: ml.model).")
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Grava as propostas em track_genres (source=embedding)."),
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Maximo de faixas alvo.")
+    ] = None,
+    preview: Annotated[
+        int, typer.Option("--preview", help="Propostas exibidas na previa.")
+    ] = 20,
+    config: Annotated[
+        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
+    ] = Path("djlife.toml"),
+) -> None:
+    """Propoe genero por k-NN sobre embeddings para faixas sem rotulo (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    name = backend or cfg.ml.backend
+    chosen_model = model or cfg.ml.model
+    try:
+        version = embedder_version(name, chosen_model)
+    except ValueError as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    plan = build_neighbor_plan(
+        conn,
+        name,
+        version,
+        k=k if k is not None else cfg.ml.neighbors,
+        min_similarity=min_similarity if min_similarity is not None else cfg.ml.min_similarity,
+        limit=limit,
+    )
+    _print_neighbor_plan(plan, preview)
+    if not apply:
+        conn.close()
+        return
+    if plan.pending == 0:
+        conn.close()
+        console.print("[yellow]Nenhuma proposta nova.[/yellow]")
+        return
+
+    result = apply_neighbor_plan(conn, plan)
+    conn.close()
+    _print_neighbor_result(result)
 
 
 def dedupe_cmd(

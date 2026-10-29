@@ -108,6 +108,9 @@ async function loadOverview() {
       tone: classification.unclassified ? "is-warn" : "is-ok",
     },
     { label: "fingerprints", value: num(data.fingerprints) },
+    { label: "analisadas", value: num(data.analysis.files) },
+    { label: "embeddings", value: num(data.embeddings.files) },
+    { label: "propostas (L3)", value: num(data.embeddings.proposed) },
     { label: "lotes aplicados", value: num(data.apply.batches) },
   ];
   $("#overview-cards").innerHTML = cards.map(cardHtml).join("");
@@ -164,8 +167,8 @@ async function loadLibrary() {
         <td>${esc(track.artist || "-")}</td>
         <td>${esc(track.album || "-")}</td>
         <td>${esc(track.genre || "-")}</td>
-        <td>${esc(track.bpm || "-")}</td>
-        <td>${esc(track.key || "-")}</td>
+        <td>${esc(track.bpm || (track.bpm_analysis ? Number(track.bpm_analysis).toFixed(1) : "-"))}</td>
+        <td>${esc(track.key || track.key_camelot || "-")}</td>
         <td>${esc(track.ext || "-")}</td>
         <td class="num">${track.duration ? duration(track.duration) : "-"}</td>
         <td class="path">${esc(track.path)}${track.is_missing ? ' <span class="badge warn">ausente</span>' : ""}</td>
@@ -257,8 +260,10 @@ async function loadManual() {
 
   $("#manual-pipeline").innerHTML = data.pipeline
     .map((stage) => {
-      const active = stage.status === "ativo";
-      const badge = active ? '<span class="badge">ativo</span>' : '<span class="badge muted">planejado</span>';
+      const active = stage.status === "ativo" || stage.status === "parcial";
+      const badge = active
+        ? `<span class="badge">${esc(stage.status)}</span>`
+        : '<span class="badge muted">planejado</span>';
       return `<div class="stage${active ? "" : " is-off"}">
         <div class="layer">${esc(stage.layer)}</div>
         <div>

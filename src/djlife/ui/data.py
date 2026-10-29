@@ -31,14 +31,16 @@ PIPELINE: tuple[dict[str, str], ...] = (
     {
         "layer": "L2",
         "name": "DSP + classificador",
-        "status": "planejado",
-        "detail": "Features de audio (BPM, tonalidade, energia) com modelo supervisionado.",
+        "status": "parcial",
+        "detail": "BPM e tonalidade (Camelot/Open Key) extraidos de audio com librosa"
+        " (Essentia como backend opcional); o classificador supervisionado vem depois.",
     },
     {
         "layer": "L3",
         "name": "Embeddings CLAP",
-        "status": "planejado",
-        "detail": "Similaridade semantica de audio para casos ambiguos.",
+        "status": "parcial",
+        "detail": "Vetores de audio (CLAP) gravados em embeddings e k-NN que propoe genero"
+        " para faixas sem rotulo (source=embedding).",
     },
     {
         "layer": "L4",
@@ -104,6 +106,27 @@ COMMANDS: tuple[dict[str, str], ...] = (
         "usage": "djlife versions",
         "summary": "Classifica versoes (Original/Extended/Radio/Remix/Bootleg) por regras.",
         "detail": "Grava o resultado em file_versions com confianca.",
+    },
+    {
+        "name": "analyze",
+        "usage": "djlife analyze [--apply] [--fast] [--backend NOME]",
+        "summary": "Extrai BPM e tonalidade (Camelot/Open Key) dos arquivos.",
+        "detail": "Backend librosa roda nativo no Windows; Essentia fica como extra opcional."
+        " Falhas de decodificacao vao para scan_errors.",
+    },
+    {
+        "name": "embed",
+        "usage": "djlife embed [--apply] [--force] [--limit N] [--model ID]",
+        "summary": "Calcula embeddings de audio (CLAP) e grava em embeddings.",
+        "detail": "Dry-run por padrao; o modelo roda em CPU e so e carregado com --apply"
+        " (extra opcional `ml`).",
+    },
+    {
+        "name": "neighbors",
+        "usage": "djlife neighbors [--apply] [--k N] [--min-similarity F]",
+        "summary": "Propoe genero por k-NN sobre embeddings para faixas sem rotulo.",
+        "detail": "Grava em track_genres com source=embedding, sem sobrescrever tags/regras"
+        " e com confianca pela concordancia da vizinhanca.",
     },
     {
         "name": "dedupe",
@@ -195,6 +218,32 @@ def overview(cfg: Config) -> dict[str, Any]:
         genres_active = _scalar(conn, "SELECT COUNT(*) FROM genres WHERE is_active = 1")
         classified = _scalar(conn, "SELECT COUNT(DISTINCT track_id) FROM track_genres")
         fingerprints = _scalar(conn, "SELECT COUNT(*) FROM fingerprints")
+        analyzed = _scalar(conn, "SELECT COUNT(DISTINCT file_id) FROM audio_analysis")
+        backends = [
+            {
+                "analyzer": str(row["analyzer"]),
+                "version": str(row["analysis_version"]),
+                "total": int(row["total"]),
+            }
+            for row in conn.execute(
+                "SELECT analyzer, analysis_version, COUNT(*) AS total FROM audio_analysis"
+                " GROUP BY analyzer, analysis_version ORDER BY analyzer, analysis_version"
+            )
+        ]
+        embedded = _scalar(conn, "SELECT COUNT(DISTINCT file_id) FROM embeddings")
+        models = [
+            {
+                "model": str(row["model"]),
+                "version": str(row["model_version"]),
+                "dim": int(row["dim"]),
+                "total": int(row["total"]),
+            }
+            for row in conn.execute(
+                "SELECT model, model_version, dim, COUNT(*) AS total FROM embeddings"
+                " GROUP BY model, model_version, dim ORDER BY model, model_version"
+            )
+        ]
+        proposed = _scalar(conn, "SELECT COUNT(*) FROM track_genres WHERE source = 'embedding'")
         batches = _scalar(conn, "SELECT COUNT(DISTINCT batch) FROM journal")
         dup_groups = [
             {"kind": str(row["kind"]), "total": int(row["total"])}
@@ -244,6 +293,8 @@ def overview(cfg: Config) -> dict[str, Any]:
         },
         "duplicates": {"groups": dup_groups, "total": sum(g["total"] for g in dup_groups)},
         "versions": {"counts": versions},
+        "analysis": {"files": analyzed, "backends": backends},
+        "embeddings": {"files": embedded, "models": models, "proposed": proposed},
         "fingerprints": fingerprints,
         "apply": {"batches": batches},
     }
