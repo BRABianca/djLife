@@ -30,6 +30,8 @@ class TrackRow:
     bpm: str | None
     key: str | None
     genre: str | None
+    bpm_analysis: float | None
+    key_camelot: str | None
     is_missing: bool
 
 
@@ -51,6 +53,18 @@ def _tag_map(conn: sqlite3.Connection) -> dict[int, dict[str, str]]:
     return result
 
 
+def _analysis_map(conn: sqlite3.Connection) -> dict[int, tuple[float | None, str | None]]:
+    """BPM/tonalidade da analise mais recente de cada arquivo."""
+    result: dict[int, tuple[float | None, str | None]] = {}
+    for row in conn.execute(
+        "SELECT file_id, bpm, key_camelot FROM audio_analysis ORDER BY analyzed_at DESC"
+    ):
+        file_id = int(row["file_id"])
+        if file_id not in result:
+            result[file_id] = (row["bpm"], row["key_camelot"])
+    return result
+
+
 def _pick(tags: dict[str, str], keys: frozenset[str]) -> str | None:
     for key in keys:
         if key in tags:
@@ -60,9 +74,11 @@ def _pick(tags: dict[str, str], keys: frozenset[str]) -> str | None:
 
 def _rows(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> list[TrackRow]:
     tag_map = _tag_map(conn)
+    analysis_map = _analysis_map(conn)
     rows: list[TrackRow] = []
     for row in conn.execute(sql, params):
         tags = tag_map.get(row["file_id"], {})
+        analysis = analysis_map.get(row["file_id"], (None, None))
         rows.append(
             TrackRow(
                 path=row["path"],
@@ -75,6 +91,8 @@ def _rows(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -
                 bpm=_pick(tags, BPM_KEYS),
                 key=_pick(tags, KEY_KEYS),
                 genre=_pick(tags, GENRE_KEYS),
+                bpm_analysis=analysis[0],
+                key_camelot=analysis[1],
                 is_missing=bool(row["is_missing"]),
             )
         )
@@ -108,6 +126,11 @@ def _count_files_with_tags(conn: sqlite3.Connection, keys: frozenset[str]) -> in
     return int(conn.execute(sql, tuple(keys)).fetchone()[0])
 
 
+def _count_analysis(conn: sqlite3.Connection, column: str) -> int:
+    sql = f"SELECT COUNT(DISTINCT file_id) FROM audio_analysis WHERE {column} IS NOT NULL"
+    return int(conn.execute(sql).fetchone()[0])
+
+
 def collect_stats(conn: sqlite3.Connection) -> Stats:
     files = int(conn.execute("SELECT COUNT(*) FROM files").fetchone()[0])
     missing = int(conn.execute("SELECT COUNT(*) FROM files WHERE is_missing = 1").fetchone()[0])
@@ -127,6 +150,8 @@ def collect_stats(conn: sqlite3.Connection) -> Stats:
         ("BPM", _count_files_with_tags(conn, BPM_KEYS), files),
         ("Tonalidade", _count_files_with_tags(conn, KEY_KEYS), files),
         ("Genero (tag)", _count_files_with_tags(conn, GENRE_KEYS), files),
+        ("BPM (analise)", _count_analysis(conn, "bpm"), files),
+        ("Tonalidade (analise)", _count_analysis(conn, "key_camelot"), files),
     ]
     return Stats(files, tracks, missing, errors, total, by_extension, coverage)
 
