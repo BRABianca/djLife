@@ -92,16 +92,46 @@ Interface web local para explorar o catálogo e entender as funcionalidades sem 
 **Critério:** `djlife ui` abre a página, mostra as métricas reais do catálogo e responde os
 endpoints JSON; assets e API validados via HTTP. ✔
 
-## Fase 9 — Análise de áudio
+## Fase 9 — Análise de áudio ✅
 
-- [ ] `essentia`: BPM (`RhythmExtractor2013`) e tonalidade → `audio_analysis`
-- [ ] "fast analysis" (primeiro minuto) para triagem rápida
-- [ ] notação Camelot/Open Key
+Backend plugável de análise (`analysis/`): contrato `Analyzer` + registro em `base.py`, com
+`librosa` como padrão nativo e `essentia` como extra opcional (ADR-0014).
 
-## Fase 10 — ML (embeddings e modelos)
+- [x] `analysis/camelot.py`: tonalidade → notação **Camelot** e **Open Key** (testável sem áudio)
+- [x] `analysis/librosa_backend.py`: BPM (`beat_track`) + tonalidade (croma + perfis de Krumhansl-Kessler)
+- [x] `analysis/essentia_backend.py`: `RhythmExtractor2013`/`KeyExtractor` (extra `essentia`, Linux/WSL2/Docker)
+- [x] "fast analysis" (`--fast`, primeiros 90 s) coexistindo com a análise completa via `analysis_version`
+- [x] `analysis/runner.py`: `build_plan` (dry-run) + `apply_plan` (upsert em `audio_analysis`; falhas em `scan_errors`)
+- [x] comando `djlife analyze` (`--backend`, `--apply`, `--fast`, `--force`, `--limit`) e config `[analysis]`
+- [x] BPM/tonalidade da análise no `report`/`stats` e na UI (visão geral + biblioteca)
 
-- [ ] L3: embeddings CLAP + k-NN
-- [ ] L4: foundation models (MERT/MuQ) como re-ranker
+**Critério:** rodar `scan → classify → analyze --apply` num catálogo real, ver BPM/tonalidade
+gravados em `audio_analysis` (sem falhas), `stats`/`report` refletindo a cobertura da análise e
+a UI mostrando as métricas. ✔
+
+## Fase 10 — ML (embeddings e modelos) ✅
+
+Camada L3 plugável (`ml/`): contrato `Embedder` + registro em `base.py`, com `clap`
+(CLAP via transformers, roda em CPU; extra `ml`) como primeiro backend (ADR-0015).
+
+- [x] `schema.sql` v4: tabela `embeddings` (vetor float32 LE em BLOB) + índice por modelo
+- [x] `ml/vectors.py`: `pack`/`unpack`/`l2_normalize`/`cosine` sem numpy (gravação independe do extra)
+- [x] `ml/clap_backend.py`: CLAP (`laion/clap-htsat-unfused`, 512 dims) com import tardio
+      (`EmbeddingUnavailable` + hint do extra); modelo só carregado no primeiro `embed()`
+- [x] `ml/runner.py`: `build_plan` (dry-run sem carregar o backend) + `apply_plan`
+      (upsert em `embeddings`; falhas em `scan_errors`), versionado por `model_version`
+- [x] `ml/neighbors.py`: k-NN sobre embeddings → propostas de gênero em `track_genres`
+      com `source = "embedding"`, confiança (A/B/C) pela concordância da vizinhança
+- [x] comandos `djlife embed` (`--apply`, `--force`, `--limit`, `--model`, `--window`) e
+      `djlife neighbors` (`--apply`, `--k`, `--min-similarity`) + config `[ml]`
+- [x] cobertura de embeddings/propostas na UI (visão geral) e pipeline L3 marcado como `parcial`
+
+Pendente desta fase: L4 (foundation models MERT/MuQ como re-ranker) — fica para a rodada
+seguinte, sobre os mesmos vetores de `embeddings`.
+
+**Critério:** rodar `scan → classify → embed --apply → neighbors --apply` (ou com embedder
+fake, sem baixar pesos) e ver vetores em `embeddings` e propostas em `track_genres`
+(`source = "embedding"`), sem sobrescrever labels L0/L1; `pytest`/`ruff`/`mypy` verdes. ✔
 
 ## Fase 11 — Empacotamento
 

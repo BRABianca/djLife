@@ -309,3 +309,91 @@ sem novas dependências:
 - (−) resolver o asset é feito em disco (`ui/assets`), o que exige o pacote instalado com os
   arquivos não-Python (garantido pelo wheel do hatchling).
 
+---
+
+## ADR-0014 — Análise de áudio com backend plugável: `librosa` + `essentia`
+
+**Status:** aceita (2026-10-29)
+
+**Contexto**
+O L2 do pipeline precisa de BPM e tonalidade (para Camelot/Open Key). O Essentia seria a
+escolha natural em qualidade, mas **não publica wheel para Windows** (o upstream aponta WSL) e
+é **AGPL-3.0** — dependência que não pode entrar no núcleo. Ao mesmo tempo, o ambiente de
+desenvolvimento é Windows e a análise precisa rodar *hoje*, sem container.
+
+**Decisão**
+Backend de análise **plugável**, com contrato `Analyzer` (`name`, `version`, `analyze`) e
+registro em `analysis/base.py`:
+
+- **padrão:** `librosa` + `soundfile` (extra `analysis`) — roda nativo no Windows, licença ISC;
+  BPM via `beats.beat_track` (normalizado para 70–180) e tonalidade via croma CQT + perfis de
+  Krumhansl-Kessler, convertidos para Camelot/Open Key em `analysis/camelot.py`;
+- **opcional:** `essentia` (extra `essentia`), selecionável por `[analysis].backend` ou
+  `--backend`, para Linux/WSL2/Docker;
+- **import tardio** em ambos (`AnalysisUnavailable` com o hint do extra), como em
+  `integrations` e `dedupe`;
+- **`analysis_version`** distingue análise completa (`1`) de *fast analysis* (`fast-1`, primeiros
+  `fast_seconds`), permitindo as duas coexistirem na UNIQUE `(file_id, analyzer, analysis_version)`;
+- execução em duas etapas: `build_plan` (dry-run) e `apply_plan` (upsert em `audio_analysis`;
+  falhas por arquivo vão para `scan_errors` e não interrompem o lote).
+
+**Consequências**
+- (+) análise funcional no Windows sem WSL/Docker e sem trazer AGPL para o núcleo;
+- (+) trocar/adicionar analisador é só implementar o protocolo — `audio_analysis` já é
+  multi-analisador (`analyzer` + `analysis_version`);
+- (+) desempenho/precisão podem ser comparados entre backends no mesmo catálogo;
+- (−) a precisão do `librosa` é menor que a do Essentia (suficiente para triagem, não para
+  substituir o BPM do Rekordbox);
+- (−) cada backend carrega dependências pesadas (numpy/scipy/numba); o extra `analysis` infla
+  o ambiente de quem instala, e o empacotamento PyInstaller precisa dos dois como extras.
+
+---
+
+## ADR-0015 — Embeddings de áudio (L3) com backend plugável e k-NN (schema v4)
+
+**Status:** aceita (2026-10-29)
+
+**Contexto**
+O L3 do pipeline precisa cobrir os casos que tags (L0) e regras (L1) não resolvem: faixas sem
+metadados úteis, mas acusticamente parecidas com as já rotuladas. Modelos de gênero
+supervisionados (MERT, MuQ) são **CC BY-NC** e exigem treino/rotulagem; vetores genéricos
+(CLAP) resolvem por **similaridade**, reusando os rótulos que o catálogo já tem. Rodar
+inferência pesada no Windows e guardá-la no SQLite sem inflar as dependências do núcleo
+(o extra CLAP é `torch` + `transformers`, ~2 GB) é o desafio de projeto.
+
+**Decisão**
+
+1. **Camada plugável** `ml/`: contrato `Embedder` (`name`, `version`, `dim`, `embed`) + registro
+   em `ml/base.py`; primeiro backend `clap` (`laion/clap-htsat-unfused`, 512 dims, 48 kHz),
+   com **import tardio** (`EmbeddingUnavailable` + hint do extra) como em `analysis`/`dedupe`.
+   O modelo é carregado só no primeiro `embed()`, então o **dry-run não baixa pesos**.
+2. **Schema v4** — tabela `embeddings(file_id, model, model_version, dim, vector, created_at)`
+   com PK `(file_id, model, model_version)`: múltiplos modelos/versões coexistem, e reanalisar
+   com outro modelo não destrói o anterior (mesmo padrão de `audio_analysis`).
+3. **Vetores como BLOB float32 little-endian** (`struct` em `ml/vectors.py`, sem `numpy`):
+   gravar/ler embedding não pode depender do extra `ml`. A similaridade é **cosseno = produto
+   interno** sobre vetores normalizados com `l2_normalize`.
+4. **k-NN (`ml/neighbors.py`)** — referências = faixas com embedding **e** rótulo (L0/L1);
+   alvos = faixas com embedding **sem** rótulo. Voto ponderado pela similaridade dos `k`
+   vizinhos acima de `min_similarity`; a concordância da vizinhança vira `confidence` (A/B/C).
+5. **Proveniência preservada** — a proposta é gravada em `track_genres` com
+   `source = "embedding"`, **nunca** com `tags`/`rules`; a UNIQUE `(track_id, genre_id, source)`
+   garante que L0/L1 não são sobrescritos nem duplicados. `neighbors` é dry-run por padrão.
+6. **Execução em duas etapas**, como `analyze`: `build_plan` (dry-run) e `apply_plan`, com
+   `--limit`/`--force`; falhas por arquivo vão para `scan_errors` sem interromper o lote.
+7. **Config `[ml]`** (`backend`, `model`, `window_seconds`, `neighbors`, `min_similarity`) e
+   comandos `djlife embed` e `djlife neighbors`. O extra é `ml` (`pip install -e ".[ml]"`).
+
+**Consequências**
+- (+) L3 funcional e *offline* para leitura: os vetores ficam no catálogo e o k-NN roda sem
+  GPU, sem rede e sem o extra instalado;
+- (+) trocar de modelo é só implementar `Embedder` — `embeddings` já é multi-modelo;
+- (+) nenhuma label de L0/L1 é perdida: a proposta é uma linha paralela, auditável e reversível;
+- (+) o núcleo continua Python puro: `vectors.py` não importa `numpy`/`torch`;
+- (−) gerar embeddings exige `torch` + `transformers` (extra opcional `ml`) e o download dos
+  pesos na primeira execução;
+- (−) o k-NN é exaustivo (O(alvos × referências)) — adequado ao catálogo pessoal, mas não
+  escala para bibliotecas muito grandes sem índice vetorial;
+- (−) a qualidade depende do modelo e do tamanho da vizinhança; ajustar `--k`/`--min-similarity`
+  é esperado. L4 (foundation models MERT/MuQ como re-ranker) fica para a rodada seguinte.
+

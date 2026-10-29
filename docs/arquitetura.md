@@ -36,6 +36,14 @@
                  └────────────┘
                         │
                  ┌────────────┐
+                 │  analysis  │──▶ audio_analysis (BPM · tonalidade Camelot/Open Key)
+                 └────────────┘
+                        │
+                 ┌────────────┐
+                 │     ml     │──▶ embeddings (CLAP) · track_genres (source=embedding)
+                 └────────────┘
+                        │
+                 ┌────────────┐
                  │  report    │──▶ CSV · JSON · estatísticas
                  └────────────┘
                         │
@@ -57,14 +65,14 @@ projeta no filesystem e grava journal.
 |---|---|---|---|---|
 | **L0** | Tags embutidas (`TBPM`, `TKEY`, `TCON`) | ~0 | A | ok |
 | **L1** | Regras locais + taxonomia (`genres.yaml`) | baixo | A/B | ok |
-| **L2** | DSP (BPM/key/energia) + classificador | médio | B | planejado |
-| **L3** | Embeddings (CLAP) + k-NN | alto | B | futuro |
+| **L2** | DSP (BPM/key/energia) + classificador | médio | B | parcial (BPM/key via `librosa`) |
+| **L3** | Embeddings (CLAP) + k-NN | alto | B | parcial (CLAP + k-NN, `source=embedding`) |
 | **L4** | Foundation models (MERT/MuQ) | alto | B | futuro |
 
 Cada resultado grava `source` + `confidence` (`A`/`B`/`C`) em `track_genres`; nada é
 sobrescrito — camadas se acumulam e a decisão final é explícita.
 
-## 3. Modelo de dados (schema v3)
+## 3. Modelo de dados (schema v4)
 
 | Tabela | Papel | Campos-chave |
 |---|---|---|
@@ -82,6 +90,7 @@ sobrescrito — camadas se acumulam e a decisão final é explícita.
 | `dup_groups` | grupos de duplicatas detectados | `kind` (`hash`/`fingerprint`/`isrc`/`mbid`), `key` (único por kind) |
 | `dup_members` | arquivos de cada grupo + keeper | `group_id`, `file_id`, `is_keeper` |
 | `file_versions` | versão rotulada da faixa | `file_id` (PK), `version`, `source`, `confidence` |
+| `embeddings` | vetor de áudio versionado por modelo (L3) | `file_id`, `model`, `model_version`, `dim`, `vector` (BLOB float32) |
 
 DDL em [`src/djlife/schema.sql`](../src/djlife/schema.sql). Acesso em `db.py`
 (`connect`, `open_catalog`, `initialize`).
@@ -109,6 +118,9 @@ maior duração → maior tamanho) permanece no lugar.
 djlife scan       → varre raízes, atualiza `files` (incremental por mtime+size)
 djlife classify   → resolve gênero em camadas (L0…), grava `track_genres`
 djlife versions   → rotula versão (Original/Extended/Radio/Remix/…) em `file_versions`
+djlife analyze    → BPM + tonalidade (Camelot/Open Key) → `audio_analysis` (dry-run; `--apply`)
+djlife embed      → vetores de áudio (CLAP) → `embeddings` (dry-run; `--apply`)
+djlife neighbors  → k-NN propõe gênero p/ faixas sem rótulo → `track_genres` (dry-run; `--apply`)
 djlife duplicates → agrupa duplicatas (hash → fingerprint → ISRC/MBID) em `dup_groups`
 djlife dedupe     → move redundantes p/ quarentena (dry-run por padrão; `--apply`)
 djlife plan       → gera plano + diff do que seria criado/movido (dry-run)
@@ -179,11 +191,15 @@ leitura**: abre conexões efêmeras, não escreve no catálogo nem no filesystem
 | Paths/config | `platformdirs` | MIT | núcleo |
 | Fingerprint | `pyacoustid` + `fpcalc` | MIT | extra `fingerprint` |
 | Rekordbox | `pyrekordbox` | MIT | extra `rekordbox`; lê/relink `master.db` (SQLCipher) |
-| Análise | `essentia` | AGPL-3.0 | extra `analysis`; **sem wheel Windows** (WSL2/Docker) |
-| Embeddings | CLAP | Apache-2.0 | futuro |
+| Análise (padrão) | `librosa` + `soundfile` | ISC | extra `analysis`; roda nativo no Windows/Linux/macOS |
+| Análise (opcional) | `essentia` | AGPL-3.0 | extra `essentia`; **sem wheel Windows** (WSL2/Docker) |
+| Embeddings (L3) | `torch` + `transformers` | BSD-3/Apache-2.0 | extra `ml`; CLAP (`laion/clap-htsat-unfused`), roda em CPU |
 | Modelos de gênero | MERT/MuQ/MAEST | CC BY-NC | uso pessoal |
 
-Extras opcionais: `pip install -e ".[fingerprint,rekordbox,analysis]"`.
+Extras opcionais: `pip install -e ".[fingerprint,rekordbox,analysis]"`; no Linux/WSL2,
+`essentia` pode substituir/complementar o backend padrão (`pip install -e ".[essentia]"`).
+A camada L3 exige o extra `ml` (`pip install -e ".[ml]"`); os pesos do CLAP são baixados do
+HuggingFace na primeira execução (o dry-run não baixa nada).
 
 ## 10. Layout do repositório
 
@@ -194,7 +210,7 @@ djLife/
 ├── genres.local.yaml.example
 ├── docs/                   # concepcão, arquitetura, roadmap, decisões
 ├── src/djlife/
-│   ├── schema.sql          # DDL v3 (journal + fingerprints/dup/file_versions)
+│   ├── schema.sql          # DDL v4 (journal + fingerprints/dup/file_versions + embeddings)
 │   ├── genres.yaml         # taxonomia padrão (versionada)
 │   ├── db.py               # conexão + PRAGMAs + initialize
 │   ├── config.py           # load_config (tomllib)
@@ -208,6 +224,8 @@ djLife/
 │   ├── planner.py          # template de caminho + diff (dry-run)
 │   ├── apply.py            # hardlink/move/tag_only + journal + undo
 │   ├── report.py           # CSV/JSON + estatísticas
+│   ├── analysis/           # backends de análise: base, camelot, librosa_backend, essentia_backend, runner
+│   ├── ml/                 # embeddings (L3): base, vectors, clap_backend, runner, neighbors (k-NN)
 │   ├── integrations/       # Rekordbox/Serato: base, leitura + relink
 │   ├── ui/                 # interface web local: data.py, server.py, assets/
 │   └── cli.py              # Typer app
@@ -216,5 +234,6 @@ djLife/
 
 ## 11. Empacotamento
 
-PyInstaller **onedir**; núcleo Python puro (~10–25 MB); Essentia/FFmpeg como extras
+PyInstaller **onedir**; núcleo Python puro (~10–25 MB); FFmpeg e os backends de análise
+(`librosa`/`soundfile`, `essentia`) e de embeddings (`ml`: `torch`/`transformers`) como extras
 on-demand para não inflar a distribuição.
