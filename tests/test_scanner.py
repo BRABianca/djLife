@@ -15,8 +15,7 @@ def test_iter_filters_extensions(tmp_path):
     _make(tmp_path, "sub/b.flac")
     _make(tmp_path, "ignore.txt")
     found = {
-        item.path.name
-        for item in scanner.iter_audio_files(tmp_path, frozenset({"mp3", "flac"}))
+        item.path.name for item in scanner.iter_audio_files(tmp_path, frozenset({"mp3", "flac"}))
     }
     assert found == {"a.mp3", "b.flac"}
 

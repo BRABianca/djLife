@@ -112,9 +112,7 @@ def test_relink_dry_run_does_not_touch(tmp_path, make_wav) -> None:
 
     tracks = serato.read_tracks(db_path, roots=(library,))
     mapping = {norm(original): str(tmp_path / "moved" / "a.wav")}
-    plan = relink_plan(
-        serato.SOFTWARE_SERATO, tracks, mapping, convert=lambda new, old: new
-    )
+    plan = relink_plan(serato.SOFTWARE_SERATO, tracks, mapping, convert=lambda new, old: new)
 
     result = serato.relink(db_path, plan, roots=(library,), apply=False)
 

@@ -123,9 +123,7 @@ def build_handler(cfg: Config) -> type[_Handler]:
     return type("_BoundHandler", (_Handler,), {"cfg": cfg})
 
 
-def build_server(
-    cfg: Config, *, host: str = "127.0.0.1", port: int = 8765
-) -> ThreadingHTTPServer:
+def build_server(cfg: Config, *, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
     """Instancia o servidor (sem iniciar o loop)."""
     return ThreadingHTTPServer((host, port), build_handler(cfg))
 

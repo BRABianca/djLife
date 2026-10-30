@@ -22,8 +22,8 @@ def _library(tmp_path, make_wav):
     rules = tmp_path / "genres.local.yaml"
     rules.write_text(
         'version: "0.1.0"\nrules:\n'
-        "  - name: lib\n    field: path\n    match: \"lib\"\n"
-        '    genre: house\n    confidence: B\n',
+        '  - name: lib\n    field: path\n    match: "lib"\n'
+        "    genre: house\n    confidence: B\n",
         encoding="utf-8",
     )
     config = tmp_path / "djlife.toml"

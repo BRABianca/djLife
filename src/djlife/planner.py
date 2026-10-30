@@ -61,11 +61,7 @@ def render_relative(template: str, fields: dict[str, str]) -> Path:
         rendered = template.format_map(safe)
     except KeyError as exc:
         raise ValueError(f"Placeholder desconhecido no template: {exc}") from exc
-    parts = [
-        part
-        for part in rendered.replace("\\", "/").split("/")
-        if part not in ("", ".", "..")
-    ]
+    parts = [part for part in rendered.replace("\\", "/").split("/") if part not in ("", ".", "..")]
     if not parts:
         raise ValueError("Template de caminho resultou em caminho vazio.")
     return Path(*parts)

@@ -43,8 +43,7 @@ def test_scan_command(tmp_path, make_wav) -> None:
     db_path = tmp_path / "catalog.db"
     config = tmp_path / "djlife.toml"
     config.write_text(
-        f'[library]\nroots = ["{library.as_posix()}"]\n'
-        f'[catalog]\npath = "{db_path.as_posix()}"\n',
+        f'[library]\nroots = ["{library.as_posix()}"]\n[catalog]\npath = "{db_path.as_posix()}"\n',
         encoding="utf-8",
     )
 
@@ -70,8 +69,7 @@ def _scanned_library(tmp_path, make_wav):
     db_path = tmp_path / "catalog.db"
     config = tmp_path / "djlife.toml"
     config.write_text(
-        f'[library]\nroots = ["{library.as_posix()}"]\n'
-        f'[catalog]\npath = "{db_path.as_posix()}"\n',
+        f'[library]\nroots = ["{library.as_posix()}"]\n[catalog]\npath = "{db_path.as_posix()}"\n',
         encoding="utf-8",
     )
     assert runner.invoke(app, ["scan", "--config", str(config)]).exit_code == 0
@@ -118,8 +116,8 @@ def _classified_library(tmp_path, make_wav):
     rules = tmp_path / "genres.local.yaml"
     rules.write_text(
         'version: "0.1.0"\nrules:\n'
-        "  - name: lib\n    field: path\n    match: \"lib\"\n"
-        '    genre: house\n    confidence: B\n',
+        '  - name: lib\n    field: path\n    match: "lib"\n'
+        "    genre: house\n    confidence: B\n",
         encoding="utf-8",
     )
     config = tmp_path / "djlife.toml"

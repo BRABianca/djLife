@@ -21,8 +21,7 @@ def test_initialize_creates_tables(tmp_path):
     conn = db.connect(tmp_path / "catalog.db")
     assert db.initialize(conn) == db.SCHEMA_VERSION
     names = {
-        row["name"]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
     assert names >= EXPECTED_TABLES
     conn.close()

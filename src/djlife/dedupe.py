@@ -123,11 +123,7 @@ def _external_buckets(
             buckets.setdefault(("isrc", value.upper()), []).append(file_id)
         elif key in MBID_KEYS or (key.startswith("ufid:") and "musicbrainz" in key):
             buckets.setdefault(("mbid", value.lower()), []).append(file_id)
-    return [
-        (kind, key, ids)
-        for (kind, key), ids in buckets.items()
-        if len(ids) >= 2
-    ]
+    return [(kind, key, ids) for (kind, key), ids in buckets.items() if len(ids) >= 2]
 
 
 def _write_groups(
@@ -211,9 +207,7 @@ def compute_fingerprints(
     else:
         placeholders = ",".join("?" * len(file_ids))
         rows = list(
-            conn.execute(
-                f"SELECT id, path FROM files WHERE id IN ({placeholders})", file_ids
-            )
+            conn.execute(f"SELECT id, path FROM files WHERE id IN ({placeholders})", file_ids)
         )
 
     now = utcnow()

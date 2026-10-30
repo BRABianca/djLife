@@ -119,10 +119,7 @@ def _count_value(conn: sqlite3.Connection, column: str) -> int:
 
 def _count_files_with_tags(conn: sqlite3.Connection, keys: frozenset[str]) -> int:
     placeholders = ",".join("?" * len(keys))
-    sql = (
-        "SELECT COUNT(DISTINCT file_id) FROM tags"
-        f" WHERE LOWER(key) IN ({placeholders})"
-    )
+    sql = f"SELECT COUNT(DISTINCT file_id) FROM tags WHERE LOWER(key) IN ({placeholders})"
     return int(conn.execute(sql, tuple(keys)).fetchone()[0])
 
 

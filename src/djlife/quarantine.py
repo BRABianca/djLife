@@ -115,9 +115,7 @@ def apply_quarantine(
         try:
             os.makedirs(extended(item.dst.parent), exist_ok=True)
             shutil.move(extended(item.src), extended(item.dst))
-            conn.execute(
-                "UPDATE files SET path = ? WHERE id = ?", (str(item.dst), item.file_id)
-            )
+            conn.execute("UPDATE files SET path = ? WHERE id = ?", (str(item.dst), item.file_id))
             conn.execute(
                 "INSERT INTO journal(batch, created_at, op, strategy, src, dst, file_id, undone)"
                 " VALUES (?, ?, 'move', ?, ?, ?, ?, 0)",
