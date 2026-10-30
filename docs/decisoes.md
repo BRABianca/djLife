@@ -397,3 +397,42 @@ inferência pesada no Windows e guardá-la no SQLite sem inflar as dependências
 - (−) a qualidade depende do modelo e do tamanho da vizinhança; ajustar `--k`/`--min-similarity`
   é esperado. L4 (foundation models MERT/MuQ como re-ranker) fica para a rodada seguinte.
 
+---
+
+## ADR-0016 — Empacotamento onedir com PyInstaller (núcleo enxuto, extras on-demand)
+
+**Status:** aceita (2026-10-29)
+
+**Contexto**
+O djLife precisa rodar em máquinas de DJ sem exigir Python ou o venv de desenvolvimento. Fazer
+isso sem arrastar as dependências pesadas do projeto (CLAP = `torch` + `transformers`, ~2 GB;
+`librosa`; `essentia`) é o ponto central: inflá-las tornaria a distribuição proibitiva e ainda
+esbarraria na ausência de wheel do `essentia` no Windows (ADR-0014). Os dados embutidos
+(`schema.sql`, `genres.yaml`, `ui/assets`) são lidos em runtime via `Path(__file__).with_name(...)`,
+o que quebra num bundle se eles não forem embarcados junto do pacote.
+
+**Decisão**
+
+1. **PyInstaller onedir** via extra `packaging` (`pip install -e ".[packaging]"`) e spec versionado
+   em `packaging/djlife.spec`. Roda com `pyinstaller packaging/djlife.spec` → `dist/djlife/`.
+2. **Núcleo enxuto:** as dependências de runtime do `pyproject.toml` (`typer`, `rich`, `mutagen`,
+   `tinytag`, `pyyaml`, `platformdirs`) são o que entra no bundle.
+3. **Extras pesados em `excludes`** no spec (`torch`, `transformers`, `librosa`, `soundfile`,
+   `essentia`, `numpy`/`scipy`, `pyacoustid`, `pyrekordbox`, …): os backends continuam
+   **on-demand**, instalados no ambiente de quem usa. O import tardio já existente
+   (`AnalysisUnavailable`/`EmbeddingUnavailable`) mantém o núcleo funcionando sem eles.
+4. **Entrypoint** = `src/djlife/__main__.py` (mesmo `app()` do console script), evitando um
+   script de boot duplicado.
+5. **Dados embutidos** via `datas` com destino `djlife/…`, espelhando o layout do pacote — que é
+   exatamente onde o `_MEIPASS` do PyInstaller posiciona os módulos congelados, mantendo
+   `Path(__file__).with_name(...)` válido sem alterar o código.
+6. **FFmpeg** não entra no bundle: é pré-requisito externo apenas para os backends de áudio.
+
+**Consequências**
+- (+) distribuição portátil (~24 MB, ~32 arquivos) que roda sem Python instalado;
+- (+) núcleo permanece Python puro e as dependências pesadas seguem isoladas;
+- (+) nenhuma mudança de código de produção: só o spec e o extra de build;
+- (−) o binário **não** inclui análise/embeddings/fingerprint/Rekordbox — quem precisar dessas
+  camadas usa o ambiente Python com os extras instalados;
+- (−) `dist/`/`build/` não são versionados (já no `.gitignore`); o artefato é regerado localmente.
+

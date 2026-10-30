@@ -133,9 +133,17 @@ seguinte, sobre os mesmos vetores de `embeddings`.
 fake, sem baixar pesos) e ver vetores em `embeddings` e propostas em `track_genres`
 (`source = "embedding"`), sem sobrescrever labels L0/L1; `pytest`/`ruff`/`mypy` verdes. ✔
 
-## Fase 11 — Empacotamento
+## Fase 11 — Empacotamento ✅
 
-- [ ] PyInstaller onedir; núcleo enxuto; extras on-demand
+Executável **onedir** do núcleo enxuto via PyInstaller (extra `packaging`, ADR-0016).
+
+- [x] extra `packaging` (`pyinstaller>=6.0`) em `pyproject.toml`
+- [x] `packaging/djlife.spec`: entrypoint `djlife/__main__.py`, `hiddenimports` do pacote
+- [x] dados embutidos (`schema.sql`, `genres.yaml`, `ui/assets`) via `datas` com destino `djlife/…`
+- [x] extras pesados em `excludes` (`torch`/`transformers`/`librosa`/`essentia`/`pyacoustid`/…)
+
+**Critério:** `pyinstaller packaging/djlife.spec` gera `dist/djlife/` (~24 MB) e o binário roda
+`--version`, `scan`, `classify` e `stats` **sem o venv** (dados resolvidos via `_MEIPASS`). ✔
 
 ## Riscos abertos
 

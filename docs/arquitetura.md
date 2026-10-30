@@ -208,6 +208,7 @@ djLife/
 ├── pyproject.toml          # hatchling, src layout, entrypoint `djlife`
 ├── djlife.toml.example     # config: roots, catalog, classification, files, integrations
 ├── genres.local.yaml.example
+├── packaging/              # spec do PyInstaller (onedir)
 ├── docs/                   # concepcão, arquitetura, roadmap, decisões
 ├── src/djlife/
 │   ├── schema.sql          # DDL v4 (journal + fingerprints/dup/file_versions + embeddings)
@@ -234,6 +235,20 @@ djLife/
 
 ## 11. Empacotamento
 
-PyInstaller **onedir**; núcleo Python puro (~10–25 MB); FFmpeg e os backends de análise
-(`librosa`/`soundfile`, `essentia`) e de embeddings (`ml`: `torch`/`transformers`) como extras
-on-demand para não inflar a distribuição.
+Distribuição **PyInstaller onedir** (extra `packaging`), núcleo Python puro em ~24 MB — roda sem
+Python nem venv (ADR-0016).
+
+```
+pip install -e ".[packaging]"
+pyinstaller packaging/djlife.spec      # → dist/djlife/djlife.exe
+```
+
+O spec [`packaging/djlife.spec`](../packaging/djlife.spec) usa `src/djlife/__main__.py` como
+entrypoint e embute os dados lidos em runtime por `Path(__file__).with_name(...)` — `schema.sql`,
+`genres.yaml` e `ui/assets` — com destino `djlife/…`, que é onde o `_MEIPASS` do PyInstaller
+posiciona o pacote congelado (por isso a resolução de dados não muda no código).
+
+Os extras pesados (`analysis`, `ml`, `essentia`, `fingerprint`, `rekordbox`) entram em
+`excludes`: FFmpeg e esses backends ficam **on-demand**, instalados no ambiente Python de quem
+usa. O binário cobre o núcleo (scan, tags, classificação, plano/apply, dedupe, relatório, UI,
+status/relink de banco DJ).
