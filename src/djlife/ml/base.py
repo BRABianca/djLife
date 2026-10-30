@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-EMBEDDERS: tuple[str, ...] = ("clap",)
+EMBEDDERS: tuple[str, ...] = ("clap", "mert", "muq")
 
 EXTRA_HINT = 'Instale o extra: pip install -e ".[ml]"'
 

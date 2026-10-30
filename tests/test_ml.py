@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 
 from djlife import db
-from djlife.ml import neighbors, vectors
+from djlife.ml import clap_backend, mert_backend, muq_backend, neighbors, vectors
+from djlife.ml.base import EmbeddingUnavailable
 from djlife.ml.clap_backend import DIM, MODEL_ID, MODEL_VERSION, version_for
 from djlife.ml.runner import apply_plan, build_plan, embedder_version, load_embedder
 
@@ -95,6 +96,32 @@ def test_embedder_version_default_model():
     assert version_for() == f"{MODEL_ID}@{MODEL_VERSION}"
     assert embedder_version("clap") == f"{MODEL_ID}@{MODEL_VERSION}"
     assert DIM == 512
+
+
+def test_l4_backends_version_and_dim():
+    assert embedder_version("mert") == f"{mert_backend.MODEL_ID}@{mert_backend.MODEL_VERSION}"
+    assert embedder_version("muq") == f"{muq_backend.MODEL_ID}@{muq_backend.MODEL_VERSION}"
+    assert mert_backend.version_for() == "m-a-p/MERT-v1-95M@1"
+    assert muq_backend.version_for() == "OpenMuQ/MuQ-large-msd-iter@1"
+    assert clap_backend.DIM == 512
+    assert mert_backend.DIM == 768
+    assert muq_backend.DIM == 1024
+
+
+def _missing_extra(name: str):
+    raise ImportError(name)
+
+
+def test_mert_create_requires_extra(monkeypatch):
+    monkeypatch.setattr(mert_backend.importlib, "import_module", _missing_extra)
+    with pytest.raises(EmbeddingUnavailable, match="transformers"):
+        mert_backend.create()
+
+
+def test_muq_create_requires_extra(monkeypatch):
+    monkeypatch.setattr(muq_backend.importlib, "import_module", _missing_extra)
+    with pytest.raises(EmbeddingUnavailable, match="muq"):
+        muq_backend.create()
 
 
 def test_load_embedder_invalid_backend():

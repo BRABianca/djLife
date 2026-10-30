@@ -100,8 +100,9 @@ def load_config(path: Path | str | None = None) -> Config:
     if not source.exists():
         return Config()
 
+    # Le como utf-8-sig para tolerar BOM (editores no Windows gravam com BOM e o tomllib recusa).
     with source.open("rb") as fh:
-        data = tomllib.load(fh)
+        data = tomllib.loads(fh.read().decode("utf-8-sig"))
 
     library = data.get("library", {})
     catalog = data.get("catalog", {})

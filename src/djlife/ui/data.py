@@ -45,8 +45,9 @@ PIPELINE: tuple[dict[str, str], ...] = (
     {
         "layer": "L4",
         "name": "Foundation models",
-        "status": "planejado",
-        "detail": "Modelos musicais dedicados para genero/subgenero refinados.",
+        "status": "parcial",
+        "detail": "MERT (extra `ml`) e MuQ (extra `muq`) como embedders alternativos do L3,"
+        " refinando genero/subgenero por similaridade acustica.",
     },
 )
 

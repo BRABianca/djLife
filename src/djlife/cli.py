@@ -95,15 +95,13 @@ def scan(
         list[Path] | None,
         typer.Argument(help="Raizes a varrer (padrao: library.roots da config)."),
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
     no_hash: Annotated[
         bool, typer.Option("--no-hash", help="Nao calcular hash de conteudo.")
     ] = False,
-    skip_tags: Annotated[
-        bool, typer.Option("--skip-tags", help="Nao ler metadados.")
-    ] = False,
+    skip_tags: Annotated[bool, typer.Option("--skip-tags", help="Nao ler metadados.")] = False,
 ) -> None:
     """Varre as raizes, atualiza o catalogo e indexa metadados."""
     cfg = config_mod.load_config(config)
@@ -159,9 +157,9 @@ def scan(
 
 @app.command()
 def classify(
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Resolve genero em camadas (tags e regras) e grava track_genres."""
     cfg, conn = _open_catalog(config)
@@ -213,9 +211,9 @@ def _open_catalog(config: Path) -> tuple[config_mod.Config, sqlite3.Connection]:
 
 @app.command()
 def stats(
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Mostra estatisticas do catalogo (arquivos, cobertura de tags, duracao)."""
     _, conn = _open_catalog(config)
@@ -258,9 +256,9 @@ def search(
         str, typer.Argument(help="Termo buscado em titulo, artista, album ou caminho.")
     ],
     limit: Annotated[int, typer.Option("--limit", "-n", help="Maximo de resultados.")] = 50,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Busca faixas no catalogo por texto."""
     _, conn = _open_catalog(config)
@@ -294,9 +292,9 @@ def report_cmd(
     fmt: Annotated[
         str | None, typer.Option("--format", "-f", help="Formato (csv/json); padrao pela extensao.")
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Exporta o catalogo para CSV ou JSON."""
     _, conn = _open_catalog(config)
@@ -369,12 +367,10 @@ def plan(
     strategy: Annotated[
         str | None, typer.Option("--strategy", "-s", help="hardlink, move ou tag_only.")
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")
-    ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Mostra o plano de organizacao (dry-run), sem tocar no filesystem."""
     cfg, conn = _open_catalog(config)
@@ -392,24 +388,18 @@ def plan(
 
 
 def apply_cmd(
-    yes: Annotated[
-        bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")
-    ] = False,
-    no_tags: Annotated[
-        bool, typer.Option("--no-tags", help="Nao gravar tags DJLIFE_*.")
-    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")] = False,
+    no_tags: Annotated[bool, typer.Option("--no-tags", help="Nao gravar tags DJLIFE_*.")] = False,
     target: Annotated[
         Path | None, typer.Option("--target", "-t", help="Diretorio de destino.")
     ] = None,
     strategy: Annotated[
         str | None, typer.Option("--strategy", "-s", help="hardlink, move ou tag_only.")
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")
-    ] = 0,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")] = 0,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Executa o plano (hardlink/move + tags DJLIFE_* + journal)."""
     cfg, conn = _open_catalog(config)
@@ -457,9 +447,9 @@ def undo(
     batch: Annotated[
         str | None, typer.Option("--batch", "-b", help="Lote a reverter (padrao: ultimo).")
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Reverte um apply usando o journal."""
     cfg, conn = _open_catalog(config)
@@ -493,9 +483,9 @@ def duplicates(
     preview: Annotated[
         int, typer.Option("--preview", "-n", help="Grupos exibidos na previa.")
     ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Detecta duplicatas em 3 niveis: hash -> fingerprint -> ISRC/MBID."""
     _, conn = _open_catalog(config)
@@ -534,9 +524,9 @@ def duplicates(
 
 
 def versions_cmd(
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Classifica versoes (Original/Extended/Radio/Remix/Bootleg) por regras."""
     _, conn = _open_catalog(config)
@@ -609,12 +599,10 @@ def analyze(
     limit: Annotated[
         int | None, typer.Option("--limit", "-n", help="Maximo de arquivos analisados.")
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", help="Itens exibidos na previa.")
-    ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Extrai BPM e tonalidade (Camelot/Open Key) para audio_analysis (dry-run por padrao)."""
     cfg, conn = _open_catalog(config)
@@ -690,7 +678,7 @@ def _print_embed_result(result: EmbedResult) -> None:
 def embed(
     backend: Annotated[
         str | None,
-        typer.Option("--backend", "-b", help="clap (padrao: ml.backend)."),
+        typer.Option("--backend", "-b", help="clap, mert ou muq (padrao: ml.backend)."),
     ] = None,
     model: Annotated[
         str | None, typer.Option("--model", help="ID do modelo (padrao: ml.model).")
@@ -708,14 +696,12 @@ def embed(
     limit: Annotated[
         int | None, typer.Option("--limit", "-n", help="Maximo de arquivos processados.")
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", help="Itens exibidos na previa.")
-    ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
-    """Calcula embeddings de audio (camada L3) para o catalogo (dry-run por padrao)."""
+    """Calcula embeddings de audio (camada L3/L4) para o catalogo (dry-run por padrao)."""
     cfg, conn = _open_catalog(config)
     name = backend or cfg.ml.backend
     chosen_model = model or cfg.ml.model
@@ -805,7 +791,7 @@ def neighbors(
     ] = None,
     backend: Annotated[
         str | None,
-        typer.Option("--backend", "-b", help="clap (padrao: ml.backend)."),
+        typer.Option("--backend", "-b", help="clap, mert ou muq (padrao: ml.backend)."),
     ] = None,
     model: Annotated[
         str | None, typer.Option("--model", help="ID do modelo (padrao: ml.model).")
@@ -817,12 +803,10 @@ def neighbors(
     limit: Annotated[
         int | None, typer.Option("--limit", "-n", help="Maximo de faixas alvo.")
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", help="Propostas exibidas na previa.")
-    ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", help="Propostas exibidas na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Propoe genero por k-NN sobre embeddings para faixas sem rotulo (dry-run por padrao)."""
     cfg, conn = _open_catalog(config)
@@ -861,19 +845,15 @@ def dedupe_cmd(
     apply: Annotated[
         bool, typer.Option("--apply", help="Executa a quarentena (move os redundantes).")
     ] = False,
-    yes: Annotated[
-        bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")
-    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")] = False,
     destination: Annotated[
         Path | None,
         typer.Option("--quarantine", "-q", help="Diretorio de quarentena."),
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")
-    ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Planeja (dry-run) a quarentena de duplicatas, movendo sem deletar."""
     cfg, conn = _open_catalog(config)
@@ -962,9 +942,9 @@ def status(
     software: Annotated[
         str | None, typer.Option("--software", "-s", help="rekordbox ou serato (padrao: ambos).")
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Verifica a integridade dos bancos DJ (itens que resolvem para arquivos existentes)."""
     cfg = config_mod.load_config(config)
@@ -1043,9 +1023,9 @@ def relink(
     preview: Annotated[
         int, typer.Option("--preview", "-n", help="Ajustes exibidos na previa.")
     ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Aponta os bancos DJ para os destinos atuais do catalogo (dry-run por padrao)."""
     cfg, conn = _open_catalog(config)
@@ -1114,9 +1094,9 @@ def ui(
     no_open: Annotated[
         bool, typer.Option("--no-open", help="Nao abrir o navegador automaticamente.")
     ] = False,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Sobe a interface web local (cyberpunk) para explorar o catalogo."""
     cfg = config_mod.load_config(config)

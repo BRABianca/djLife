@@ -7,11 +7,24 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from djlife.ml import clap_backend, vectors
+from djlife.ml import clap_backend, mert_backend, muq_backend, vectors
 from djlife.ml.base import EMBEDDERS, Embedder
 from djlife.scanner import utcnow
 
 ProgressCallback = Callable[[int, int, str], None]
+
+# Registro dos backends: L3 (clap) e L4 (mert/muq). Todos expõem `create` e `version_for`.
+_CREATORS: dict[str, Callable[..., Embedder]] = {
+    clap_backend.NAME: clap_backend.create,
+    mert_backend.NAME: mert_backend.create,
+    muq_backend.NAME: muq_backend.create,
+}
+
+_VERSIONS: dict[str, Callable[[str | None], str]] = {
+    clap_backend.NAME: clap_backend.version_for,
+    mert_backend.NAME: mert_backend.version_for,
+    muq_backend.NAME: muq_backend.version_for,
+}
 
 _INSERT = """
     INSERT INTO embeddings(file_id, model, model_version, dim, vector, created_at)
@@ -30,16 +43,24 @@ def load_embedder(
     window_seconds: float | None = None,
 ) -> Embedder:
     """Instancia o backend pedido, sinalizando cedo se o extra nao estiver presente."""
-    if name == clap_backend.NAME:
-        return clap_backend.create(model_id=model, window_seconds=window_seconds)
-    raise ValueError(f"embedder invalido: {name!r}. Use um de {', '.join(EMBEDDERS)}.")
+    try:
+        create = _CREATORS[name]
+    except KeyError:
+        raise ValueError(
+            f"embedder invalido: {name!r}. Use um de {', '.join(EMBEDDERS)}."
+        ) from None
+    return create(model_id=model, window_seconds=window_seconds)
 
 
 def embedder_version(name: str, model: str | None = None) -> str:
     """`model_version` de um backend, sem carregar modelo nem importar o extra."""
-    if name == clap_backend.NAME:
-        return clap_backend.version_for(model)
-    raise ValueError(f"embedder invalido: {name!r}. Use um de {', '.join(EMBEDDERS)}.")
+    try:
+        version_for = _VERSIONS[name]
+    except KeyError:
+        raise ValueError(
+            f"embedder invalido: {name!r}. Use um de {', '.join(EMBEDDERS)}."
+        ) from None
+    return version_for(model)
 
 
 @dataclass(frozen=True)
