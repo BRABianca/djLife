@@ -126,8 +126,8 @@ Camada L3 plugável (`ml/`): contrato `Embedder` + registro em `base.py`, com `c
       `djlife neighbors` (`--apply`, `--k`, `--min-similarity`) + config `[ml]`
 - [x] cobertura de embeddings/propostas na UI (visão geral) e pipeline L3 marcado como `parcial`
 
-Pendente desta fase: L4 (foundation models MERT/MuQ como re-ranker) — fica para a rodada
-seguinte, sobre os mesmos vetores de `embeddings`.
+Pendente desta fase: L4 (foundation models MERT/MuQ) — entregue na Fase 12 (ADR-0017),
+sobre os mesmos vetores de `embeddings`.
 
 **Critério:** rodar `scan → classify → embed --apply → neighbors --apply` (ou com embedder
 fake, sem baixar pesos) e ver vetores em `embeddings` e propostas em `track_genres`
@@ -144,6 +144,24 @@ Executável **onedir** do núcleo enxuto via PyInstaller (extra `packaging`, ADR
 
 **Critério:** `pyinstaller packaging/djlife.spec` gera `dist/djlife/` (~24 MB) e o binário roda
 `--version`, `scan`, `classify` e `stats` **sem o venv** (dados resolvidos via `_MEIPASS`). ✔
+
+## Fase 12 — L4 (foundation models) ✅
+
+Backends musicais dedicados como embedders plugáveis do L3/L4 (ADR-0017), sem mudar schema
+nem o k-NN.
+
+- [x] `ml/mert_backend.py`: MERT-v1-95M (`m-a-p/MERT-v1-95M`, 768 dims, 24 kHz) via
+      `transformers` (`trust_remote_code=True`); média das camadas ocultas no tempo
+- [x] `ml/muq_backend.py`: MuQ (`OpenMuQ/MuQ-large-msd-iter`, 1024 dims, 24 kHz) via pacote
+      `muq` (extra `muq`); média do tempo de `last_hidden_state`
+- [x] registro por dicionário em `ml/runner.py` (`_CREATORS`/`_VERSIONS`) e `EMBEDDERS`
+      ampliado para `clap`/`mert`/`muq`; `--backend` de `embed`/`neighbors` aceita os três
+- [x] config `[ml]` e `djlife.toml.example` documentando os backends; UI com L4 marcado `parcial`
+- [x] fix do `load_config` para tolerar BOM (`utf-8-sig`) descoberto no smoke test do executável
+
+**Critério:** `embed --backend mert|muq` seleciona o backend e grava vetores com o
+`model_version` correto (ou falha cedo com `EmbeddingUnavailable` quando o extra falta);
+`pytest`/`ruff`/`mypy` verdes. ✔
 
 ## Riscos abertos
 

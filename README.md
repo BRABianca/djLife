@@ -5,7 +5,7 @@ SQLite** (fonte de verdade) e reorganiza o filesystem por gênero/subgênero **s
 bibliotecas Serato/Rekordbox — por padrão via **hardlink**, sem tocar nos originais.
 
 Pipeline de classificação em camadas: tags (L0) → regras + taxonomia (L1) → DSP BPM/tonalidade
-(L2) → embeddings CLAP + k-NN (L3).
+(L2) → embeddings CLAP + k-NN (L3) → foundation models MERT/MuQ (L4).
 
 ---
 
@@ -98,19 +98,21 @@ Instale apenas o que precisar (a instalação base já cobre o núcleo):
 | Extra | Para quê | Instalação |
 |---|---|---|
 | `analysis` | BPM + tonalidade via `librosa` (L2) | `pip install -e ".[analysis]"` |
-| `ml` | Embeddings CLAP + k-NN (L3) | `pip install -e ".[ml]"` |
+| `ml` | Embeddings CLAP/MERT + k-NN (L3/L4) | `pip install -e ".[ml]"` |
+| `muq` | Embedder MuQ (L4, pesos CC-BY-NC) | `pip install -e ".[muq]"` |
 | `fingerprint` | Duplicatas por fingerprint acústico (Chromaprint) | `pip install -e ".[fingerprint]"` |
 | `rekordbox` | Ler/relink de `master.db` do Rekordbox 6/7 | `pip install -e ".[rekordbox]"` |
 | `essentia` | Backend alternativo de análise (Linux/WSL2; sem wheel no Windows) | `pip install -e ".[essentia]"` |
 | `packaging` | Gerar o executável com PyInstaller | `pip install -e ".[packaging]"` |
 | `dev` | Testes, lint e tipagem (pytest/ruff/mypy) | `pip install -e ".[dev]"` |
 
-Exemplo com a camada L3:
+Exemplo com a camada L3/L4:
 
 ```powershell
-pip install -e ".[ml]"
-djlife embed        # dry-run; --apply grava os vetores em `embeddings`
-djlife neighbors    # dry-run; --apply propõe gênero para faixas sem rótulo
+pip install -e ".[ml]"          # CLAP/MERT; use ".[muq]" para o MuQ
+djlife embed                     # dry-run; --apply grava os vetores em `embeddings`
+djlife embed --backend mert      # ou --backend muq (requer o extra correspondente)
+djlife neighbors                 # dry-run; --apply propõe gênero para faixas sem rótulo
 ```
 
 > O `essentia` não publica wheel para Windows e exige `python-ffmpeg`. No Windows use `librosa`

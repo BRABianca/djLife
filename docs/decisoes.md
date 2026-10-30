@@ -395,7 +395,7 @@ inferência pesada no Windows e guardá-la no SQLite sem inflar as dependências
 - (−) o k-NN é exaustivo (O(alvos × referências)) — adequado ao catálogo pessoal, mas não
   escala para bibliotecas muito grandes sem índice vetorial;
 - (−) a qualidade depende do modelo e do tamanho da vizinhança; ajustar `--k`/`--min-similarity`
-  é esperado. L4 (foundation models MERT/MuQ como re-ranker) fica para a rodada seguinte.
+  é esperado. L4 (foundation models MERT/MuQ como re-ranker) foi implementado na ADR-0017.
 
 ---
 
@@ -435,4 +435,41 @@ o que quebra num bundle se eles não forem embarcados junto do pacote.
 - (−) o binário **não** inclui análise/embeddings/fingerprint/Rekordbox — quem precisar dessas
   camadas usa o ambiente Python com os extras instalados;
 - (−) `dist/`/`build/` não são versionados (já no `.gitignore`); o artefato é regerado localmente.
+
+---
+
+## ADR-0017 — Backends L4 (MERT/MuQ) como embedders plugáveis
+
+**Status:** aceita (2026-10-30)
+
+**Contexto**
+O L4 do pipeline (foundation models musicais) previa MERT/MuQ para refinar gênero/subgênero.
+Ambos são modelos **CC BY-NC** (ADR-0001) de porte médio (MERT-v1-95M ~95M; MuQ-large ~300M),
+rodam em CPU e produzem vetores por *mean pooling*. Em vez de exigir um classificador
+supervisionado treinado, eles entram com o mesmo contrato do L3 — a diferença é o **espaço de
+embedding** (768/1024 dims) e, portanto, o `model_version` gravado no catálogo.
+
+**Decisão**
+
+1. **Mesmo contrato `Embedder`** (`name`, `version`, `dim`, `embed`): `mert` e `muq` são apenas
+   novos registros em `ml/runner.py`, sem tocar no k-NN nem no schema (a PK
+   `(file_id, model, model_version)` já suporta múltiplos modelos).
+2. **`mert`** (`m-a-p/MERT-v1-95M`, 768 dims, 24 kHz) usa `Wav2Vec2FeatureExtractor` +
+   `AutoModel` com `trust_remote_code=True`; import tardio do `transformers`/`torch` (extra `ml`).
+   O vetor é a média das 13 camadas ocultas sobre os *time-steps* (`hidden_states`).
+3. **`muq`** (`OpenMuQ/MuQ-large-msd-iter`, 1024 dims, 24 kHz) usa o pacote `muq`
+   (`from muq import MuQ`); extra dedicado `muq` (`pip install -e ".[muq]"`). O vetor é a média
+   do tempo de `last_hidden_state`.
+4. **Áudio lido com `librosa` em 24 kHz mono** (mesma estratégia do CLAP, com fallback
+   `extended()` para paths longos do Windows), alimentando o *processor*/tensor de cada modelo.
+5. **`model_version` = `<model_id>@1`**; trocar de modelo cria uma linha nova em `embeddings` e
+   reanalisar com `--force` não destrói os vetores de outro backend.
+
+**Consequências**
+- (+) L4 plugável reaproveitando 100% da infraestrutura de L3 (`embed`/`neighbors`/UI);
+- (+) pesos NC isolados em extras opcionais, coerente com a porta de saída da ADR-0001;
+- (+) nenhuma mudança de schema: multi-modelo já era suportado;
+- (−) MuQ arrasta o pacote `muq` e os pesos `OpenMuQ` (CC-BY-NC 4.0, uso não comercial);
+- (−) inferência de mais de um modelo sobre o mesmo catálogo custa tempo de CPU — o `--limit`
+  do `embed` existe justamente para processar em lote.
 

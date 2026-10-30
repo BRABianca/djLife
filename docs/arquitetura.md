@@ -67,7 +67,7 @@ projeta no filesystem e grava journal.
 | **L1** | Regras locais + taxonomia (`genres.yaml`) | baixo | A/B | ok |
 | **L2** | DSP (BPM/key/energia) + classificador | médio | B | parcial (BPM/key via `librosa`) |
 | **L3** | Embeddings (CLAP) + k-NN | alto | B | parcial (CLAP + k-NN, `source=embedding`) |
-| **L4** | Foundation models (MERT/MuQ) | alto | B | futuro |
+| **L4** | Foundation models (MERT/MuQ) | alto | B | parcial (`mert`/`muq` como embedders, ADR-0017) |
 
 Cada resultado grava `source` + `confidence` (`A`/`B`/`C`) em `track_genres`; nada é
 sobrescrito — camadas se acumulam e a decisão final é explícita.
@@ -119,7 +119,7 @@ djlife scan       → varre raízes, atualiza `files` (incremental por mtime+siz
 djlife classify   → resolve gênero em camadas (L0…), grava `track_genres`
 djlife versions   → rotula versão (Original/Extended/Radio/Remix/…) em `file_versions`
 djlife analyze    → BPM + tonalidade (Camelot/Open Key) → `audio_analysis` (dry-run; `--apply`)
-djlife embed      → vetores de áudio (CLAP) → `embeddings` (dry-run; `--apply`)
+djlife embed      → vetores de áudio (clap/mert/muq) → `embeddings` (dry-run; `--apply`)
 djlife neighbors  → k-NN propõe gênero p/ faixas sem rótulo → `track_genres` (dry-run; `--apply`)
 djlife duplicates → agrupa duplicatas (hash → fingerprint → ISRC/MBID) em `dup_groups`
 djlife dedupe     → move redundantes p/ quarentena (dry-run por padrão; `--apply`)
@@ -193,13 +193,15 @@ leitura**: abre conexões efêmeras, não escreve no catálogo nem no filesystem
 | Rekordbox | `pyrekordbox` | MIT | extra `rekordbox`; lê/relink `master.db` (SQLCipher) |
 | Análise (padrão) | `librosa` + `soundfile` | ISC | extra `analysis`; roda nativo no Windows/Linux/macOS |
 | Análise (opcional) | `essentia` | AGPL-3.0 | extra `essentia`; **sem wheel Windows** (WSL2/Docker) |
-| Embeddings (L3) | `torch` + `transformers` | BSD-3/Apache-2.0 | extra `ml`; CLAP (`laion/clap-htsat-unfused`), roda em CPU |
+| Embeddings (L3) | `torch` + `transformers` | BSD-3/Apache-2.0 | extra `ml`; CLAP (`laion/clap-htsat-unfused`) e MERT (`m-a-p/MERT-v1-95M`), rodam em CPU |
+| Embeddings (L4) | `muq` | MIT (pesos CC-BY-NC) | extra `muq`; MuQ (`OpenMuQ/MuQ-large-msd-iter`), roda em CPU |
 | Modelos de gênero | MERT/MuQ/MAEST | CC BY-NC | uso pessoal |
 
 Extras opcionais: `pip install -e ".[fingerprint,rekordbox,analysis]"`; no Linux/WSL2,
 `essentia` pode substituir/complementar o backend padrão (`pip install -e ".[essentia]"`).
-A camada L3 exige o extra `ml` (`pip install -e ".[ml]"`); os pesos do CLAP são baixados do
-HuggingFace na primeira execução (o dry-run não baixa nada).
+Os embeddings exigem o extra `ml` (`pip install -e ".[ml]"`, CLAP/MERT) — ou o extra `muq`
+(`pip install -e ".[muq]"`, MuQ); os pesos são baixados do HuggingFace na primeira execução
+(o dry-run não baixa nada).
 
 ## 10. Layout do repositório
 
@@ -226,7 +228,7 @@ djLife/
 │   ├── apply.py            # hardlink/move/tag_only + journal + undo
 │   ├── report.py           # CSV/JSON + estatísticas
 │   ├── analysis/           # backends de análise: base, camelot, librosa_backend, essentia_backend, runner
-│   ├── ml/                 # embeddings (L3): base, vectors, clap_backend, runner, neighbors (k-NN)
+│   ├── ml/                 # embeddings (L3/L4): base, vectors, clap/mert/muq_backend, runner, neighbors
 │   ├── integrations/       # Rekordbox/Serato: base, leitura + relink
 │   ├── ui/                 # interface web local: data.py, server.py, assets/
 │   └── cli.py              # Typer app
@@ -248,7 +250,7 @@ entrypoint e embute os dados lidos em runtime por `Path(__file__).with_name(...)
 `genres.yaml` e `ui/assets` — com destino `djlife/…`, que é onde o `_MEIPASS` do PyInstaller
 posiciona o pacote congelado (por isso a resolução de dados não muda no código).
 
-Os extras pesados (`analysis`, `ml`, `essentia`, `fingerprint`, `rekordbox`) entram em
+Os extras pesados (`analysis`, `ml`, `muq`, `essentia`, `fingerprint`, `rekordbox`) entram em
 `excludes`: FFmpeg e esses backends ficam **on-demand**, instalados no ambiente Python de quem
 usa. O binário cobre o núcleo (scan, tags, classificação, plano/apply, dedupe, relatório, UI,
 status/relink de banco DJ).

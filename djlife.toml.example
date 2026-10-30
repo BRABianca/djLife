@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 
 [library]
 # Raízes varridas pelo scanner.
@@ -48,8 +48,9 @@ fast = false
 fast_seconds = 90.0
 
 [ml]
-# Backend de embeddings (camada L3) usado por `embed`/`neighbors`.
-# clap = CLAP via transformers; roda em CPU (extra `ml`).
+# Backend de embeddings (camadas L3/L4) usado por `embed`/`neighbors`.
+# clap = CLAP via transformers (extra `ml`); mert = MERT-v1-95M via transformers (extra `ml`);
+# muq  = MuQ-large-msd-iter via pacote `muq` (extra `muq`). Todos rodam em CPU.
 backend = "clap"
 # ID do modelo no HuggingFace (vazio = padrão laion/clap-htsat-unfused).
 model = ""
