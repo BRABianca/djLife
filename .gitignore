@@ -15,6 +15,9 @@ djlife.toml
 *.journal
 quarantine/
 
+# Segredos locais (chaves de licenca, registro do admin e licencas emitidas)
+secrets/
+
 # Ferramentas
 .pytest_cache/
 .ruff_cache/

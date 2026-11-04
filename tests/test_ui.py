@@ -52,7 +52,7 @@ def test_overview_reports_catalog(tmp_path, make_wav) -> None:
     assert payload["stats"]["files"] == 2
     assert payload["stats"]["tracks"] == 2
     assert payload["classification"]["classified"] >= 1
-    assert payload["catalog"]["schema_version"] == "4"
+    assert payload["catalog"]["schema_version"] == "5"
     assert payload["duplicates"]["total"] >= 1
     assert payload["embeddings"]["files"] == 0
 

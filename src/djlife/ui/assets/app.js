@@ -151,30 +151,217 @@ async function loadOverview() {
   `;
 }
 
-async function loadLibrary() {
-  const query = $("#library-query").value.trim();
-  const data = await api(`/api/tracks?limit=200&q=${encodeURIComponent(query)}`);
-  const rows = data.tracks;
+const LIB_COLUMNS = [
+  { key: "title", label: "titulo", type: "text" },
+  { key: "artist", label: "artista", type: "text" },
+  { key: "album", label: "album", type: "text" },
+  { key: "genre", label: "genero", type: "text" },
+  { key: "bpm", label: "bpm", type: "num" },
+  { key: "key", label: "tom", type: "text" },
+  { key: "ext", label: "formato", type: "text" },
+  { key: "duration", label: "duracao", type: "num" },
+];
 
-  $("#library-count").textContent = rows.length
-    ? `${rows.length} faixa(s) exibida(s)${query ? ` para "${query}"` : ""}`
-    : "nenhuma faixa encontrada";
+const libraryState = {
+  tracks: [],
+  genre: null,
+  query: "",
+  sortKey: "title",
+  sortDir: "asc",
+  selected: null,
+};
 
-  $("#library-table tbody").innerHTML = rows
-    .map(
-      (track) => `<tr>
-        <td>${esc(track.title || "-")}</td>
+const NO_GENRE = "sem genero";
+
+function trackGenreName(track) {
+  return (track.genre || "").trim() || NO_GENRE;
+}
+
+function trackBpmValue(track) {
+  const value = Number.parseFloat(track.bpm || track.bpm_analysis);
+  return Number.isFinite(value) ? value : null;
+}
+
+function trackBpmLabel(track) {
+  const value = trackBpmValue(track);
+  if (value === null) return "-";
+  return track.bpm ? String(track.bpm) : value.toFixed(1);
+}
+
+function trackKeyLabel(track) {
+  return track.key || track.key_camelot || "-";
+}
+
+function trackFormat(track) {
+  return String(track.ext || "").replace(".", "").toUpperCase() || "-";
+}
+
+function librarySortValue(track, key) {
+  if (key === "bpm") return trackBpmValue(track);
+  if (key === "duration") return Number(track.duration) || null;
+  const value = String(track[key] || "").trim().toLowerCase();
+  return value || null;
+}
+
+function compareLibraryTracks(a, b) {
+  const av = librarySortValue(a, libraryState.sortKey);
+  const bv = librarySortValue(b, libraryState.sortKey);
+  if (av === null && bv === null) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  const dir = libraryState.sortDir === "desc" ? -1 : 1;
+  if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+  return String(av).localeCompare(String(bv), "pt-BR") * dir;
+}
+
+function filteredLibraryTracks() {
+  const query = libraryState.query.toLowerCase();
+  const genre = libraryState.genre ? libraryState.genre.toLowerCase() : null;
+  return libraryState.tracks
+    .filter((track) => {
+      if (genre && trackGenreName(track).toLowerCase() !== genre) return false;
+      if (!query) return true;
+      return [track.title, track.artist, track.album, track.path].some((value) =>
+        String(value || "").toLowerCase().includes(query)
+      );
+    })
+    .sort(compareLibraryTracks);
+}
+
+function renderLibraryHead() {
+  const cells = LIB_COLUMNS.map((column) => {
+    const active = libraryState.sortKey === column.key;
+    const arrow = active
+      ? `<span class="sort-arrow">${libraryState.sortDir === "asc" ? "^" : "v"}</span>`
+      : "";
+    const cls = [column.type === "num" ? "num-col" : "", active ? "is-sorted" : ""].filter(Boolean).join(" ");
+    return `<th data-key="${column.key}"${cls ? ` class="${cls}"` : ""}>${esc(column.label)}${arrow}</th>`;
+  });
+  $("#library-head").innerHTML = `<th class="idx">#</th>${cells.join("")}`;
+}
+
+function renderLibraryGenres() {
+  const counts = new Map();
+  for (const track of libraryState.tracks) {
+    const name = trackGenreName(track);
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  const items = [
+    `<button type="button" class="lib-side-item${libraryState.genre ? "" : " is-active"}" data-genre="">
+      <span>toda a biblioteca</span><span class="count">${num(libraryState.tracks.length)}</span>
+    </button>`,
+  ];
+  for (const [name, total] of counts.entries()) {
+    const active = libraryState.genre && libraryState.genre.toLowerCase() === name.toLowerCase();
+    items.push(`<button type="button" class="lib-side-item${active ? " is-active" : ""}" data-genre="${esc(name)}">
+      <span>${esc(name)}</span><span class="count">${num(total)}</span>
+    </button>`);
+  }
+  $("#library-genres").innerHTML = items.join("");
+}
+
+function renderLibraryRows() {
+  const rows = filteredLibraryTracks();
+  const body = $("#library-table tbody");
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="${LIB_COLUMNS.length + 1}" class="empty">nenhuma faixa encontrada</td></tr>`;
+    return rows;
+  }
+  body.innerHTML = rows
+    .map((track, index) => {
+      const selected = libraryState.selected && libraryState.selected.path === track.path;
+      const cls = [selected ? "is-selected" : "", track.is_missing ? "is-missing" : ""].filter(Boolean).join(" ");
+      return `<tr data-path="${esc(track.path)}"${cls ? ` class="${cls}"` : ""}>
+        <td class="idx">${index + 1}</td>
+        <td class="title">${esc(track.title || "(sem titulo)")}</td>
         <td>${esc(track.artist || "-")}</td>
         <td>${esc(track.album || "-")}</td>
-        <td>${esc(track.genre || "-")}</td>
-        <td>${esc(track.bpm || (track.bpm_analysis ? Number(track.bpm_analysis).toFixed(1) : "-"))}</td>
-        <td>${esc(track.key || track.key_camelot || "-")}</td>
-        <td>${esc(track.ext || "-")}</td>
-        <td class="num">${track.duration ? duration(track.duration) : "-"}</td>
-        <td class="path">${esc(track.path)}${track.is_missing ? ' <span class="badge warn">ausente</span>' : ""}</td>
-      </tr>`
-    )
+        <td>${esc(trackGenreName(track))}</td>
+        <td class="num-col">${esc(trackBpmLabel(track))}</td>
+        <td>${esc(trackKeyLabel(track))}</td>
+        <td>${esc(trackFormat(track))}</td>
+        <td class="num-col">${track.duration ? duration(track.duration) : "-"}</td>
+      </tr>`;
+    })
     .join("");
+  return rows;
+}
+
+function renderLibraryDetail() {
+  const track = libraryState.selected;
+  const empty = $("#library-detail-empty");
+  const body = $("#library-detail-body");
+  if (!track) {
+    empty.classList.remove("hidden");
+    body.classList.add("hidden");
+    body.innerHTML = "";
+    return;
+  }
+  empty.classList.add("hidden");
+  body.classList.remove("hidden");
+  const rows = [
+    ["artista", track.artist],
+    ["album", track.album],
+    ["genero", trackGenreName(track)],
+    ["bpm", trackBpmLabel(track)],
+    ["tom", trackKeyLabel(track)],
+    ["formato", trackFormat(track)],
+    ["duracao", track.duration ? duration(track.duration) : ""],
+    ["tamanho", track.size ? `${(Number(track.size) / (1024 * 1024)).toFixed(1)} MB` : ""],
+  ];
+  body.innerHTML = `
+    <div class="lib-detail-title">${esc(track.title || "(sem titulo)")}</div>
+    <div class="lib-detail-sub">${esc(track.artist || "artista desconhecido")}</div>
+    ${track.is_missing ? '<span class="badge warn">arquivo ausente</span>' : ""}
+    <div class="lib-detail-grid">
+      ${rows
+        .map(([label, value]) => `<div class="row"><span>${esc(label)}</span><span>${esc(value || "-")}</span></div>`)
+        .join("")}
+    </div>
+    <div class="lib-detail-path">${esc(track.path)}</div>
+  `;
+}
+
+function updateLibraryStatus(rows) {
+  const shown = rows.length;
+  const total = libraryState.tracks.length;
+  const missing = rows.filter((track) => track.is_missing).length;
+  const totalDuration = rows.reduce((acc, track) => acc + (Number(track.duration) || 0), 0);
+  $("#library-count").textContent = `${num(shown)} faixa${shown === 1 ? "" : "s"}`;
+  $("#library-scope").textContent = libraryState.genre ? `genero: ${libraryState.genre}` : "toda a biblioteca";
+  $("#library-status").textContent = `${num(shown)} de ${num(total)} faixa(s) exibida(s)`;
+  const bits = [];
+  if (missing) bits.push(`${num(missing)} ausente(s)`);
+  if (shown) bits.push(`duracao ${duration(totalDuration)}`);
+  if (libraryState.query) bits.push(`busca: "${libraryState.query}"`);
+  $("#library-status-right").textContent = bits.join(" · ");
+}
+
+function refreshLibrary() {
+  renderLibraryHead();
+  renderLibraryGenres();
+  renderLibraryDetail();
+  const rows = renderLibraryRows();
+  updateLibraryStatus(rows);
+}
+
+function toggleLibraryClear() {
+  $("#library-clear").classList.toggle("hidden", !$("#library-query").value);
+}
+
+async function loadLibrary() {
+  const data = await api("/api/tracks?limit=1000&q=");
+  libraryState.tracks = data.tracks || [];
+  libraryState.query = $("#library-query").value.trim();
+  if (
+    libraryState.genre &&
+    !libraryState.tracks.some((track) => trackGenreName(track).toLowerCase() === libraryState.genre.toLowerCase())
+  ) {
+    libraryState.genre = null;
+  }
+  libraryState.selected = libraryState.tracks.find((track) => track.path === (libraryState.selected || {}).path) || null;
+  toggleLibraryClear();
+  refreshLibrary();
 }
 
 async function loadDuplicates() {
@@ -522,7 +709,49 @@ $("#tabs").addEventListener("click", (event) => {
 
 $("#library-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  run("library");
+  libraryState.query = $("#library-query").value.trim();
+  toggleLibraryClear();
+  refreshLibrary();
+});
+
+$("#library-query").addEventListener("input", () => {
+  libraryState.query = $("#library-query").value.trim();
+  toggleLibraryClear();
+  refreshLibrary();
+});
+
+$("#library-clear").addEventListener("click", () => {
+  $("#library-query").value = "";
+  libraryState.query = "";
+  toggleLibraryClear();
+  refreshLibrary();
+});
+
+$("#library-genres").addEventListener("click", (event) => {
+  const button = event.target.closest(".lib-side-item");
+  if (!button) return;
+  libraryState.genre = button.dataset.genre || null;
+  refreshLibrary();
+});
+
+$("#library-head").addEventListener("click", (event) => {
+  const header = event.target.closest("th[data-key]");
+  if (!header) return;
+  const key = header.dataset.key;
+  if (libraryState.sortKey === key) {
+    libraryState.sortDir = libraryState.sortDir === "asc" ? "desc" : "asc";
+  } else {
+    libraryState.sortKey = key;
+    libraryState.sortDir = "asc";
+  }
+  refreshLibrary();
+});
+
+$("#library-table").addEventListener("click", (event) => {
+  const row = event.target.closest("tbody tr[data-path]");
+  if (!row) return;
+  libraryState.selected = libraryState.tracks.find((track) => track.path === row.dataset.path) || null;
+  refreshLibrary();
 });
 
 $("#admin-login").addEventListener("submit", (event) => {
@@ -592,11 +821,199 @@ $("#admin-table").addEventListener("click", async (event) => {
   }
 });
 
-api("/api/version")
-  .then((info) => {
-    $("#meta-app").textContent = `v${info.version}`;
-  })
-  .catch(() => {});
+async function setupFetch(endpoint, options = {}) {
+  const response = await fetch(`/api/setup/${endpoint}`, {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    payload = null;
+  }
+  if (!response.ok) {
+    throw new Error((payload && payload.error) || `HTTP ${response.status}`);
+  }
+  return payload;
+}
 
-initAdminTab();
-activate("overview");
+const ONBOARD = {
+  places: [],
+  path: null,
+  parent: null,
+  busy: false,
+  scanTimer: null,
+};
+
+function onboardFeedback(message, tone = "") {
+  const box = $("#onboarding-feedback");
+  if (!message) {
+    box.className = "onboarding-feedback hidden";
+    box.textContent = "";
+    return;
+  }
+  box.className = `onboarding-feedback${tone ? ` ${tone}` : ""}`;
+  box.textContent = message;
+}
+
+function renderOnboardPlaces() {
+  $("#onboarding-places").innerHTML = ONBOARD.places.length
+    ? ONBOARD.places
+        .map(
+          (place) => `<button type="button" class="onboard-place${
+            place.path === ONBOARD.path ? " is-active" : ""
+          }" data-path="${esc(place.path)}">${esc(place.name)}</button>`
+        )
+        .join("")
+    : `<div class="empty">sem locais</div>`;
+}
+
+function renderOnboardDirs(data) {
+  ONBOARD.path = data.path;
+  ONBOARD.parent = data.parent;
+  $("#onboarding-current").value = data.path;
+  $("#onboarding-up").disabled = !data.parent;
+  renderOnboardPlaces();
+  $("#onboarding-dirs").innerHTML = data.dirs.length
+    ? data.dirs
+        .map(
+          (dir) => `<button type="button" class="onboard-dir" data-path="${esc(dir.path)}">
+            <span class="onboard-dir-icon">/</span><span>${esc(dir.name)}</span>
+          </button>`
+        )
+        .join("")
+    : `<div class="empty">nenhuma subpasta aqui</div>`;
+}
+
+async function onboardNavigate(path) {
+  try {
+    renderOnboardDirs(await setupFetch(`list?path=${encodeURIComponent(path)}`));
+    onboardFeedback("");
+  } catch (err) {
+    onboardFeedback(err.message, "fail");
+  }
+}
+
+async function onboardUse() {
+  if (ONBOARD.busy || !ONBOARD.path) return;
+  ONBOARD.busy = true;
+  try {
+    await setupFetch("root", { method: "POST", body: JSON.stringify({ path: ONBOARD.path }) });
+    onboardFeedback("pasta raiz salva. Agora escaneie para indexar o acervo.", "ok");
+    $("#onboarding-scan").classList.remove("hidden");
+    $("#onboarding-use").disabled = true;
+  } catch (err) {
+    onboardFeedback(err.message, "fail");
+  } finally {
+    ONBOARD.busy = false;
+  }
+}
+
+const SCAN_LABELS = { idle: "aguardando", running: "varrendo", done: "concluido", error: "erro" };
+
+function renderOnboardScan(job) {
+  const status = job.status || "idle";
+  const chip = $("#onboarding-scan-status");
+  chip.textContent = SCAN_LABELS[status] || status;
+  chip.className = `chip signal ${status === "running" ? "warn" : status === "done" ? "ok" : status === "error" ? "fail" : ""}`.trim();
+  const stats = [
+    ["vistos", job.seen],
+    ["novos", job.new],
+    ["atualizados", job.updated],
+    ["ausentes", job.missing],
+    ["indexados", job.indexed],
+    ["erros", job.errors],
+  ];
+  $("#onboarding-scan-stats").innerHTML = stats
+    .map(([label, value]) => `<div class="onboard-stat"><span>${esc(label)}</span><b>${num(value)}</b></div>`)
+    .join("");
+}
+
+function pollOnboardScan() {
+  window.clearTimeout(ONBOARD.scanTimer);
+  ONBOARD.scanTimer = window.setTimeout(async () => {
+    let job = null;
+    try {
+      job = await setupFetch("scan");
+    } catch (err) {
+      onboardFeedback(err.message, "fail");
+    }
+    if (job) renderOnboardScan(job);
+    if (job && job.status === "running") {
+      pollOnboardScan();
+      return;
+    }
+    $("#onboarding-scan-now").disabled = false;
+    $("#onboarding-scan-now").textContent = "escanear novamente";
+    $("#onboarding-finish").classList.remove("hidden");
+  }, 1200);
+}
+
+async function onboardScan() {
+  $("#onboarding-scan-now").disabled = true;
+  try {
+    renderOnboardScan(await setupFetch("scan", { method: "POST" }));
+    pollOnboardScan();
+  } catch (err) {
+    onboardFeedback(err.message, "fail");
+    $("#onboarding-scan-now").disabled = false;
+  }
+}
+
+async function initOnboarding() {
+  const status = await setupFetch("status");
+  if (status.configured) return false;
+  ONBOARD.places = status.places || [];
+  const start = status.places && status.places.length ? status.places[0].path : "/";
+  await onboardNavigate(start);
+  $("#onboarding").classList.remove("hidden");
+  return true;
+}
+
+$("#onboarding-places").addEventListener("click", (event) => {
+  const button = event.target.closest(".onboard-place");
+  if (button) onboardNavigate(button.dataset.path);
+});
+
+$("#onboarding-dirs").addEventListener("click", (event) => {
+  const button = event.target.closest(".onboard-dir");
+  if (button) onboardNavigate(button.dataset.path);
+});
+
+$("#onboarding-up").addEventListener("click", () => {
+  if (ONBOARD.parent) onboardNavigate(ONBOARD.parent);
+});
+
+$("#onboarding-use").addEventListener("click", onboardUse);
+$("#onboarding-scan-now").addEventListener("click", onboardScan);
+
+$("#onboarding-finish").addEventListener("click", () => {
+  window.clearTimeout(ONBOARD.scanTimer);
+  $("#onboarding").classList.add("hidden");
+  boot();
+});
+
+async function boot() {
+  try {
+    const info = await api("/api/version");
+    $("#meta-app").textContent = `v${info.version}`;
+  } catch (err) {
+    /* metadados opcionais */
+  }
+  await initAdminTab();
+  await activate("overview");
+}
+
+(async () => {
+  try {
+    if (await initOnboarding()) return;
+  } catch (err) {
+    showBanner(`Falha ao carregar primeiro acesso: ${err.message}`);
+  }
+  boot();
+})();

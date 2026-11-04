@@ -76,23 +76,46 @@
     <section class="view" id="view-library">
       <div class="view-head">
         <h2>biblioteca</h2>
-        <p>Busca textual por titulo, artista, album ou caminho no catalogo.</p>
+        <p>Acervo completo no estilo Rekordbox: filtre pela colecao de generos, busque e ordene por qualquer coluna.</p>
       </div>
-      <form class="searchbar" id="library-form">
-        <input type="search" id="library-query" placeholder="digite e pressione enter..." autocomplete="off" />
-        <button type="submit" class="btn">buscar</button>
-      </form>
-      <div class="hint" id="library-count"></div>
-      <div class="table-wrap">
-        <table class="table" id="library-table">
-          <thead>
-            <tr>
-              <th>titulo</th><th>artista</th><th>album</th><th>genero</th>
-              <th>bpm</th><th>key</th><th>ext</th><th>dur</th><th>caminho</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+
+      <div class="lib-toolbar">
+        <form class="lib-search" id="library-form">
+          <input type="search" id="library-query" placeholder="buscar titulo, artista, album ou caminho..." autocomplete="off" />
+          <button type="button" class="lib-clear hidden" id="library-clear" aria-label="limpar busca">x</button>
+        </form>
+        <div class="lib-toolbar-meta">
+          <span class="chip" id="library-scope">toda a biblioteca</span>
+          <span class="chip" id="library-count">0 faixas</span>
+        </div>
+      </div>
+
+      <div class="lib-shell">
+        <aside class="lib-sidebar" aria-label="colecao de generos">
+          <div class="lib-side-head">colecao</div>
+          <div class="lib-side-list" id="library-genres"></div>
+        </aside>
+
+        <div class="lib-main">
+          <div class="lib-table-wrap">
+            <table class="lib-table" id="library-table">
+              <thead>
+                <tr id="library-head"></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <aside class="lib-detail" aria-label="detalhe da faixa">
+          <div class="lib-detail-empty" id="library-detail-empty">selecione uma faixa</div>
+          <div class="lib-detail-body hidden" id="library-detail-body"></div>
+        </aside>
+      </div>
+
+      <div class="lib-statusbar">
+        <span id="library-status">0 faixas</span>
+        <span id="library-status-right"></span>
       </div>
     </section>
 
@@ -224,6 +247,41 @@
     <span>djLife // catalogo somente leitura · admin por token</span>
     <span id="foot-catalog"></span>
   </footer>
+
+  <div class="onboarding hidden" id="onboarding" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+    <div class="onboard-card">
+      <header class="onboard-head">
+        <span class="eyebrow">primeiro acesso</span>
+        <h2 id="onboarding-title">selecione sua pasta raiz</h2>
+        <p>Escolha a pasta que guarda suas musicas atuais e futuras. O djLife usa essa raiz para varrer e indexar o acervo; nada e movido sem confirmacao.</p>
+      </header>
+
+      <div class="onboard-pathbar">
+        <button type="button" class="btn ghost" id="onboarding-up" title="subir um nivel">subir</button>
+        <input type="text" id="onboarding-current" readonly aria-label="pasta atual" />
+        <button type="button" class="btn" id="onboarding-use">usar esta pasta</button>
+      </div>
+
+      <div class="onboard-body">
+        <aside class="onboard-places" id="onboarding-places" aria-label="locais"></aside>
+        <div class="onboard-dirs" id="onboarding-dirs" aria-label="subpastas"></div>
+      </div>
+
+      <div class="onboarding-feedback hidden" id="onboarding-feedback" role="status"></div>
+
+      <div class="onboard-scan hidden" id="onboarding-scan">
+        <div class="onboard-scan-head">
+          <span>varredura do catalogo</span>
+          <span class="chip signal" id="onboarding-scan-status">aguardando</span>
+        </div>
+        <div class="onboard-scan-stats" id="onboarding-scan-stats"></div>
+        <div class="onboard-actions">
+          <button type="button" class="btn" id="onboarding-scan-now">escanear agora</button>
+          <button type="button" class="btn ghost hidden" id="onboarding-finish">entrar no catalogo</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="/assets/app.js"></script>
 </body>

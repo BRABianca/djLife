@@ -17,7 +17,7 @@ STATUS_CONFLICT = "conflict"
 STATUS_UNCLASSIFIED = "unclassified"
 
 CONFIDENCE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
-SOURCE_ORDER = {"manual": 0, "tags": 1, "rules": 2, "embedding": 3}
+SOURCE_ORDER = {"manual": 0, "tags": 1, "rules": 2, "learned": 3, "embedding": 4}
 _INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE = re.compile(r"\s+")
 
@@ -133,19 +133,27 @@ def _classifications(conn: sqlite3.Connection) -> dict[int, list[tuple[int, str,
     return result
 
 
-def _primary(entries: list[tuple[int, str, str]], genres: dict[int, _Genre]) -> int:
-    def key(entry: tuple[int, str, str]) -> tuple[int, int, int, int]:
-        genre_id, confidence, source = entry
-        node = genres.get(genre_id)
-        level = node.level if node is not None else 0
-        return (
-            SOURCE_ORDER.get(source, 9),
-            CONFIDENCE_ORDER.get(confidence, 9),
-            -level,
-            genre_id,
-        )
+def _entry_key(entry: tuple[int, str, str], genres: dict[int, _Genre]) -> tuple[int, int, int, int]:
+    genre_id, confidence, source = entry
+    node = genres.get(genre_id)
+    level = node.level if node is not None else 0
+    return (
+        SOURCE_ORDER.get(source, 9),
+        CONFIDENCE_ORDER.get(confidence, 9),
+        -level,
+        genre_id,
+    )
 
-    return min(entries, key=key)[0]
+
+def primary_entry(
+    entries: list[tuple[int, str, str]], genres: dict[int, _Genre]
+) -> tuple[int, str, str]:
+    """Entrada vencedora pela ordem (fonte, confianca, especificidade, id)."""
+    return min(entries, key=lambda entry: _entry_key(entry, genres))
+
+
+def _primary(entries: list[tuple[int, str, str]], genres: dict[int, _Genre]) -> int:
+    return primary_entry(entries, genres)[0]
 
 
 def resolve_labels(conn: sqlite3.Connection) -> dict[int, tuple[str, str]]:
