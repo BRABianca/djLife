@@ -110,7 +110,7 @@ djlife license revoke RECORD_ID                 # marca a licença como revogada
 djlife import "https://..."            # dry-run: lê os metadados
 djlife import "https://..." --apply    # baixa para --out (padrão: downloads/)
 
-# 11. Interface web local (Tech-Noir; catálogo só leitura; aba admin por token)
+# 11. Interface web local (Tech-Noir; catálogo só leitura; abas admin e organizar por token)
 djlife ui
 
 # 12. Diagnóstico do ambiente e do catálogo (somente leitura)
@@ -231,13 +231,32 @@ djlife license revoke RECORD_ID
 A aba **admin** do `djlife ui` oferece a mesma gestão (emitir, renovar, revogar) pelo navegador.
 Com `[license].admin_token` definido, abra a aba, informe o token e opere; sem token a
 administração fica **desabilitada**. A regra de segurança (ADR-0021): o **catálogo musical
-continua somente leitura** — as únicas escritas vindas da UI ocorrem em `/api/admin/*`,
-autenticadas pelo header `X-Admin-Token`, e atingem apenas o **registro JSON de licenças** e os
-arquivos de licença. O servidor segue escutando em `127.0.0.1`.
+continua somente leitura** — as escritas vindas da UI ficam **isoladas por família de rota**,
+autenticadas pelo header `X-Admin-Token` (ou `token` no body) e com bloqueio de mesma origem
+(CSRF): `/api/admin/*` (ADR-0021, registro JSON de licenças), `/api/setup/*` (ADR-0023,
+configuração `library.roots`/`[files]`) e `/api/organize/*` (ADR-0024, organização no filesystem
++ journal). O servidor segue escutando em `127.0.0.1`.
 
 > **Revogação offline não é DRM.** Marcar uma licença como `revoked` atualiza o **registro da
 > dona**, mas não desliga uma licença já entregue ao cliente — o app só verifica a assinatura
 > offline. A revogação serve para o controle interno, não como desligamento remoto.
+
+### Organização pela interface (aba *organizar*)
+
+A **ideia central** do produto — pegar músicas espalhadas por várias pastas e organizá-las — roda
+pela web, em **modo owner/admin**, com o mesmo núcleo da CLI. O menu é **auditável**: nada é
+escrito no filesystem antes de você revisar o plano.
+
+1. **Destino e estratégia** — informe a pasta de destino e escolha `hardlink` (preserva os
+   originais), `move` (realoca) ou `tag_only`; grava em `[files]` do `djlife.toml`.
+2. **Indexar** — *varrer pastas* (`scan`) e *classificar gêneros* (`classify`, camadas tags/regras).
+3. **Revisar** — *gerar plano* (dry-run): tabela item a item com origem, gênero, destino e status
+   (`pronto`, `já existe`, `conflito`, `sem gênero`). Só itens **prontos** são selecionáveis.
+4. **Aplicar** — aplica os itens selecionados (hardlink/move + tags `DJLIFE_*` + journal).
+5. **Desfazer** — o painel *lotes aplicados* lista os lotes; o botão *desfazer* reverte o lote pelo
+   journal.
+
+Pela CLI o fluxo equivalente é `djlife plan` → `djlife apply` → `djlife undo`.
 
 ---
 

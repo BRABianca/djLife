@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -16,12 +17,12 @@ def _get(url: str) -> tuple[int, bytes]:
         return response.status, response.read()
 
 
-def _post(url: str, payload: dict) -> tuple[int, bytes]:
+def _post(url: str, payload: dict, headers: dict | None = None) -> tuple[int, bytes]:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(headers or {})},
     )
     with urllib.request.urlopen(request, timeout=5) as response:
         return response.status, response.read()
@@ -170,6 +171,103 @@ def test_server_setup_rejects_blank_root(tmp_path) -> None:
         with pytest.raises(urllib.error.HTTPError) as error:
             _post(f"{base}/api/setup/root", {"path": "  "})
         assert error.value.code == 400
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
+def test_update_files_settings_preserves_other_blocks(tmp_path) -> None:
+    config_file = tmp_path / "djlife.toml"
+    config_file.write_text(
+        '[library]\nroots = ["C:/Music"]\n\n'
+        '[files]\nstrategy = "hardlink"\ntarget = "C:/old"\n'
+        'template = "{genre}/{artist}"\n\n'
+        '[license]\nadmin_token = "abc"\n',
+        encoding="utf-8",
+    )
+
+    config_mod.update_files_settings(config_file, target="D:/Out", strategy="move")
+
+    text = config_file.read_text(encoding="utf-8")
+    assert 'strategy = "move"' in text
+    assert 'target = "D:/Out"' in text
+    assert 'template = "{genre}/{artist}"' in text
+    assert 'roots = ["C:/Music"]' in text
+    assert 'admin_token = "abc"' in text
+    assert "C:/old" not in text
+    loaded = config_mod.load_config(config_file)
+    assert loaded.files.target == Path("D:/Out")
+    assert loaded.files.strategy == "move"
+
+
+def test_update_files_settings_creates_section(tmp_path) -> None:
+    config_file = tmp_path / "djlife.toml"
+    config_file.write_text('[library]\nroots = ["C:/Music"]\n', encoding="utf-8")
+
+    config_mod.update_files_settings(config_file, target="D:/Out", strategy="hardlink")
+
+    text = config_file.read_text(encoding="utf-8")
+    assert "[files]" in text
+    assert 'roots = ["C:/Music"]' in text
+    loaded = config_mod.load_config(config_file)
+    assert loaded.files.target == Path("D:/Out")
+    assert loaded.files.strategy == "hardlink"
+
+
+def test_update_files_settings_rejects_invalid_strategy(tmp_path) -> None:
+    config_file = tmp_path / "djlife.toml"
+
+    with pytest.raises(ValueError):
+        config_mod.update_files_settings(config_file, target="D:/Out", strategy="nope")
+
+
+def test_setup_save_files_writes_config(tmp_path) -> None:
+    config_file = tmp_path / "djlife.toml"
+    destination = tmp_path / "out"
+
+    saved = setup.save_files(config_file, target=str(destination), strategy="move")
+
+    assert saved.files.target == destination
+    assert saved.files.strategy == "move"
+    state = setup.files_state(saved)
+    assert state["target"] == str(destination)
+    assert state["strategy"] == "move"
+    assert "hardlink" in state["strategies"]
+
+
+def test_setup_save_files_rejects_invalid_target(tmp_path) -> None:
+    config_file = tmp_path / "djlife.toml"
+    file_target = tmp_path / "not-a-dir"
+    file_target.write_text("x", encoding="utf-8")
+
+    with pytest.raises(setup.SetupError):
+        setup.save_files(config_file, target="  ", strategy="hardlink")
+    with pytest.raises(setup.SetupError):
+        setup.save_files(config_file, target=str(tmp_path / "out"), strategy="nope")
+    with pytest.raises(setup.SetupError):
+        setup.save_files(config_file, target=str(file_target), strategy="hardlink")
+
+
+def test_server_setup_files_requires_token(tmp_path) -> None:
+    config_file = tmp_path / "djlife.toml"
+    config_file.write_text('[license]\nadmin_token = "abc"\n', encoding="utf-8")
+    cfg = config_mod.load_config(config_file)
+    payload = {"target": str(tmp_path / "out"), "strategy": "move"}
+
+    httpd = server.build_server(cfg, host="127.0.0.1", port=0, config_path=config_file)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    base = f"http://{host}:{port}"
+    try:
+        with pytest.raises(urllib.error.HTTPError) as error:
+            _post(f"{base}/api/setup/files", payload)
+        assert error.value.code == 403
+
+        _, body = _post(f"{base}/api/setup/files", payload, {"X-Admin-Token": "abc"})
+        assert json.loads(body)["strategy"] == "move"
+        assert config_mod.load_config(config_file).files.strategy == "move"
     finally:
         httpd.shutdown()
         httpd.server_close()

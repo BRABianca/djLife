@@ -199,26 +199,31 @@ dependências novas e sem build de frontend (ADR-0013).
 | Camada | Arquivo | Papel |
 |---|---|---|
 | Dados | `ui/data.py` | leituras do catálogo → JSON (`overview`, `tracks`, `duplicates`, `versions`, `integrations`, `capabilities`) |
-| Servidor | `ui/server.py` | `ThreadingHTTPServer` (stdlib): assets em `ui/assets` + endpoints `/api/*` (leitura) e `/api/admin/*` (escrita, gated por token) |
+| Servidor | `ui/server.py` | `ThreadingHTTPServer` (stdlib): assets em `ui/assets` + endpoints `/api/*` (leitura), `/api/setup/*` e `/api/organize/*` (escrita, gated por token) e `/api/admin/*` |
+| Onboarding | `ui/setup.py` | navegação de pastas, `library.roots` no TOML, `ScanJob`/`start_scan` e `[files]` (destino/estratégia) |
+| Organização | `ui/organize.py` | encadeia o núcleo (`classifier`/`planner`/`apply`) em `TaskJob` para a aba *organizar* |
 | Admin | `admin.py` (via servidor) | emitir/renovar/revogar licenças no registro JSON; modo owner |
 | Assets | `ui/assets/` | `index.html`, `app.css`, `app.js` (Tech-Noir / luxo sombrio) |
 
 Endpoints de leitura: `/api/overview`, `/api/tracks?q=&limit=`, `/api/duplicates`, `/api/versions`,
-`/api/integrations`, `/api/capabilities`, `/api/version`.
+`/api/integrations`, `/api/capabilities`, `/api/version`, `/api/organize/{status,plan,history,job}`.
 
 Endpoints de administração: `GET /api/admin/status` (público: `{enabled, owner}`),
 `GET /api/admin/licenses` (autenticado: detalhes + lista) e `POST /api/admin/{issue,renew,revoke}`.
 Toda rota admin exige o header `X-Admin-Token` (ou `token` no body), conferido contra
 `[license].admin_token` com `hmac.compare_digest`.
 
-Abas da página: **visão geral**, **biblioteca**, **duplicatas**, **versões**, **integrações**,
-**premium**, **manual** (pipeline L0→L4, comandos, oferta premium e garantias de segurança) e
-**admin** (controle de licenças). A aba **admin** fica **oculta por padrão** e só aparece quando
-`[license].admin_token` está configurado — o usuário comum vê um app limpo, sem a aba.
-O catálogo musical é **somente leitura**: abre conexões efêmeras, não escreve no catálogo nem no
-filesystem da biblioteca, escuta em `127.0.0.1` por padrão e resolve assets bloqueando travessia
-de diretório. A **única** escrita vinda da UI ocorre em `/api/admin/*` e atinge apenas o
-**registro JSON de licenças** e arquivos de licença (ADR-0021, emenda à ADR-0013).
+Abas da página: **visão geral**, **biblioteca**, **organizar** (menu auditável), **duplicatas**,
+**versões**, **integrações**, **premium**, **manual** (pipeline L0→L4, comandos, oferta premium e
+garantias de segurança) e **admin** (controle de licenças). As abas **admin** e **organizar**
+ficam **ocultas por padrão** e só aparecem quando `[license].admin_token` está configurado — o
+usuário comum vê um app limpo, sem elas.
+O catálogo musical é **somente leitura** para consulta: abre conexões efêmeras e escuta em
+`127.0.0.1` por padrão, resolvendo assets com bloqueio de travessia de diretório. As escritas
+vindas da UI ficam **isoladas por família de rota** (todas com bloqueio de mesma origem/CSRF):
+`/api/admin/*` (registro JSON de licenças, ADR-0021), `/api/setup/*` (configuração
+`library.roots`/`[files]`, ADR-0023) e `/api/organize/*` (organização no filesystem + journal,
+ADR-0024).
 
 ## 7.1 Licenciamento offline do premium
 
@@ -238,6 +243,25 @@ catálogo, com estado efetivo `active`/`expired`/`revoked`. O **modo owner** (`p
 `features = ("*",)`) libera **todos** os recursos via `premium.is_owner`/`license.feature_granted`;
 a gestão (emitir/renovar/revogar) roda pela CLI (`djlife license …`) ou pela **aba admin** da UI,
 ambas sobre o mesmo núcleo de `admin.py` e o mesmo registro.
+
+## 7.2 Organização auditável pela web (aba *organizar*)
+
+Fecha o *core* do produto na interface (ADR-0024): o fluxo `scan → classify → plan → apply →
+undo` roda pela web, em **modo owner/admin**, sem sair do navegador.
+
+- `ui/organize.py` reaproveita integralmente o núcleo (`scanner`, `taxonomy`, `classifier`,
+  `planner`, `apply`) e apenas o embrulha em `TaskJob` (thread `daemon` + `snapshot()`), seguindo
+  o padrão de `ui/setup.ScanJob`; a UI acompanha por *polling* em `/api/organize/job?task=`.
+- **Escrita isolada** em `/api/organize/*`: `POST {scan,classify,apply,undo}` (gated por
+  `X-Admin-Token` + mesma origem) e leituras `GET {status,plan,history,job}`.
+- **Plano auditável**: `plan_payload` devolve itens com origem/gênero/destino/status
+  (`ready`/`exists`/`conflict`/`unclassified`) e só `ready` é selecionável no frontend; o `apply`
+  respeita `track_ids` (aprovação parcial) — `None` aplica todos os prontos.
+- **Reversível**: cada `apply` grava um `batch` no `journal`; a aba lista os lotes e o `undo`
+  reverte por lote (hardlinks removidos, moves restaurados, tags `DJLIFE_*` removidas).
+- **Destino/estratégia** vêm de `[files]` (`files.target`/`files.strategy`), editáveis pela UI via
+  `config.update_files_settings` + `POST /api/setup/files` (exige token), com edição cirúrgica do
+  TOML que preserva comentários e demais seções.
 
 ## 8. Performance
 
@@ -306,15 +330,16 @@ djLife/
 │   ├── analysis/           # backends de análise: base, camelot, librosa_backend, essentia_backend, runner
 │   ├── ml/                 # embeddings (L3/L4): base, vectors, clap/mert/muq_backend, runner, neighbors
 │   ├── integrations/       # Rekordbox/Serato: base, leitura + relink (beta)
-│   ├── ui/                 # interface web local: data.py, server.py, assets/
+│   ├── ui/                 # interface web local: data.py, server.py, setup.py, organize.py, assets/
 │   └── cli.py              # Typer app
 └── tests/
 ```
 
 ## 11. Empacotamento
 
-Distribuição **PyInstaller onedir** (extra `packaging`), núcleo Python puro em ~24 MB — roda sem
-Python nem venv (ADR-0016).
+Distribuição **PyInstaller onedir** (extra `packaging`), núcleo Python puro — roda sem Python nem
+venv (ADR-0016). Com o extra opcional `premium` instalado (yt-dlp), o bundle fica em ~42 MB;
+sem ele, ~24 MB.
 
 ```
 pip install -e ".[packaging]"

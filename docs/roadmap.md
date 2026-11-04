@@ -324,6 +324,30 @@ o usuário escolhe a pasta raiz pelo próprio app e, em seguida, pode escanear.
 ao vivo; com raiz já configurada o app abre direto na visão geral; `ruff`/`mypy`/`pytest`
 (271 passed) verdes. ✔
 
+## Fase 19 — Menu de organização auditável na UI (MVP) ✅
+
+> Spec: **ADR-0024** (emenda à ADR-0013). Fecha o *core* do produto na interface: o núcleo de
+> organização (Fases 4/5/13) deixa de exigir terminal e passa a rodar pela web, com revisão
+> **item a item** antes de qualquer escrita no filesystem.
+
+- [x] `ui/organize.py`: encadeia o núcleo em `TaskJob` (thread daemon + snapshot) —
+      `status`, `plan_payload`, `start_classify`, `start_apply`, `start_undo`, `history`
+- [x] `ui/server.py`: terceira família de escrita isolada em `/api/organize/*`
+      (`scan`/`classify`/`apply`/`undo` + leitura `status`/`plan`/`history`/`job`), gated por
+      token de administração (`X-Admin-Token`), mesma origem (CSRF) e bind em `127.0.0.1`
+- [x] `config.update_files_settings` + rota `POST /api/setup/files`: define **destino** e
+      **estratégia** (`hardlink`/`move`/`tag_only`) pela UI, preservando o restante do TOML
+- [x] aba **organizar** (`index.html`/`app.css`/`app.js`): passos indexar → revisar → aplicar,
+      painel de destino/estratégia, plano auditável com checkboxes (só `ready`), console de
+      tarefa e histórico de lotes com **desfazer**
+- [x] `tests/test_organize.py`/`tests/test_setup.py`: fluxo unitário e HTTP, exigência de token,
+      round-trip `apply` → `history` → `undo` com hardlink real, gravação de `[files]`
+- [x] `docs/decisoes.md`: ADR-0024
+
+**Critério:** pela web (modo owner/admin) — varrer → classificar → gerar plano → auditar por item
+→ aplicar selecionados → ver o lote no histórico → desfazer; destino/estratégia configuráveis sem
+tocar em terminal; `ruff`/`mypy`/`pytest` (287 passed) verdes. ✔
+
 ## Riscos abertos
 
 - **Cues/beatgrids** ao mover arquivos → mitigado por hardlink (Fase 5) e relink (Fase 7).
@@ -333,4 +357,5 @@ ao vivo; com raiz já configurada o app abre direto na visão geral; `ruff`/`myp
   offline-first; Discogs `styles` como fonte principal.
 - **Exposição de caminhos locais pela interface** → servidor escuta em `127.0.0.1` por padrão,
   sem dependências externas (nada sai da máquina). As escritas vindas da UI ficam isoladas em
-  `/api/setup/*` (ADR-0023, só configuração) e `/api/admin/*` (ADR-0021, só registro de licenças).
+  `/api/setup/*` (ADR-0023, configuração), `/api/organize/*` (ADR-0024, filesystem + journal) e
+  `/api/admin/*` (ADR-0021, registro de licenças), todas gated por token/CSRF quando aplicável.

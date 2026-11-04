@@ -768,4 +768,73 @@ a ADR-0013 fixou como somente leitura e a ADR-0021 já havia emendado (apenas pa
 - (−) o status do scan vive em memória (por processo); reiniciar o servidor durante a varredura
   perde o acompanhamento (a varredura pode ser refeita a qualquer momento).
 
+---
+
+## ADR-0024 — Menu de organização auditável na UI (emenda à ADR-0013)
+
+**Status:** aceita (2026-11-04)
+
+**Contexto**
+O objetivo central do djLife é **organizar fisicamente** pastas de música desorganizadas. O núcleo
+já implementa toda a trilha na CLI: `planner.build_plan` (dry-run), `classifier.classify`/
+`taxonomy.sync`, `apply.apply` (hardlink/move + tags `DJLIFE_*`) com **journal reversível**
+(ADR-0008) e `apply.undo`. Faltava a **parte principal do produto**: um jeito de o usuário
+**conduzir e auditar** essa organização sem terminal. A ADR-0013 fixou a UI como **somente
+leitura**; a ADR-0021 emendou apenas para licenças e a ADR-0023 para o setup (raiz + varredura).
+Expor `apply` pela web reabre o risco mais sério do projeto: a ADR-0002/0018 mostram que mover
+originais quebra softwares de DJ, que dependem de **caminhos absolutos**.
+
+**Decisão**
+
+1. **Fluxo auditável em etapas**: *varrer → classificar → gerar plano (dry-run) → auditar item a
+   item → aplicar → desfazer*. A UI expõe a trilha como uma aba **organizar**, sem reimplementar
+   nada — cada passo chama o mesmo núcleo usado pela CLI.
+2. **Escrita isolada em `/api/organize/*`**: leitura em `GET organize/status|plan|history|job`;
+   escrita em `POST organize/scan|classify|apply|undo`. É a **terceira** família de rotas de
+   escrita (após `admin` e `setup`) e **nova emenda explícita à ADR-0013**.
+3. **Gate owner/admin**: todas as rotas de escrita exigem `X-Admin-Token` (comparado com
+   `hmac.compare_digest`), checagem de **mesma origem** (CSRF, `_same_origin`) e bind `127.0.0.1`
+   — as mesmas salvaguardas das ADR-0021/0023. Sem token configurado, a organização fica
+   desabilitada.
+4. **Plano antes de tocar o disco**: `apply` reusa `planner.build_plan` internamente e só considera
+   itens com status `STATUS_READY`; itens `exists`/`conflict`/`unclassified` são exibidos para
+   auditoria mas **nunca** aplicados. O `POST apply` sem um plano prévio é inócuo (o plano é
+   recalculado no servidor).
+5. **Aprovação parcial (auditoria item a item)**: `POST organize/apply` aceita `track_ids`.
+   *Ausente* aplica **todos** os prontos; *lista* aplica **apenas** os itens aprovados pelo usuário.
+   Isso permite que o usuário aprove subconjuntos do plano em vez de aceitá-lo inteiro.
+6. **Journal e reversão por lote**: `apply` grava no `journal` (ADR-0008); `GET organize/history`
+   agrupa os lotes (`files`, `tags`, `pending`) e `POST organize/undo` reverte um lote
+   (`apply.undo(batch, stop=files.target, quarantine_dir=...)`). A reversibilidade é a salvaguarda
+   contra a alteração de caminhos.
+7. **Tarefas longas em segundo plano**: varredura/classificação/aplicação/reversão rodam em thread
+   *daemon* com um `TaskJob` (snapshot + *polling*), reusando o padrão `setup.ScanJob` da ADR-0023;
+   a UI acompanha por `GET organize/job?task=...`, sem bloquear o navegador.
+8. **Reuso do núcleo (fonte da verdade única)**: a organização usa `taxonomy`/`classifier`/
+   `planner`/`apply` — a UI não move um único arquivo por conta própria. A varredura reaproveita
+   `setup.start_scan`, e a classificação grava `track_genres` na mesma resolução em camadas
+   (`manual < tags < rules < learned < embedding`, ADR-0019/0022).
+9. **Estratégia de arquivos explícita**: `hardlink` (padrão) **preserva os originais** e é o modo
+   recomendado; `move` relocaliza os arquivos e depende do journal/undo para reverter; `tag_only`
+   não move nada. O template e o diretório de não classificados vêm do `djlife.toml`
+   (`files.target`, `files.unknown_dir`), sem novos parâmetros.
+
+**Consequências**
+- (+) o objetivo central do produto passa a ser operável e auditável pela UI, sem terminal;
+- (+) o usuário revisa o plano item a item e pode aplicar apenas o que aprovar (aprovação parcial);
+- (+) nenhuma reimplementação: a UI dirige o mesmo núcleo da CLI, evitando divergência de
+  comportamento;
+- (+) dry-run obrigatório + `hardlink` padrão + journal/undo contêm o risco de alterar caminhos;
+- (+) mesma postura de segurança das ADR-0021/0023 (token, mesma origem, `127.0.0.1`, catálogo
+  continua somente leitura para consulta — só `apply`/`undo` escrevem no filesystem);
+- (−) a UI ganha uma **terceira** família de rotas de escrita; como nas ADR-0021/0023, toda nova
+  rota precisa justificativa e as mesmas salvaguardas;
+- (−) o estado das tarefas vive em memória (por processo): reiniciar o servidor durante um `apply`
+  perde o acompanhamento — o `journal` persiste, então a reversão do lote continua possível;
+- (−) `move` altera o caminho dos originais; se o journal for perdido, a reversão não é possível —
+  mitigado pelo padrão `hardlink` e por exigir plano/undo explícitos;
+- (−) softwares de DJ usam caminhos absolutos: mesmo em `hardlink` o caminho "novo" passa a existir
+  e precisa ser reindexado no software (fora de escopo; coerente com a ADR-0018, que trata
+  integrações como beta).
+
 

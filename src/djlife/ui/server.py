@@ -1,8 +1,11 @@
 """Servidor HTTP local (stdlib) que serve a interface Tech-Noir do djLife.
 
 Serve os assets embutidos em `ui/assets` e expoe endpoints JSON em `/api/*`.
-Somente leitura para o catalogo: as unicas escritas ocorrem em `/api/admin/*`,
-restritas ao registro local de licencas, gated por token e bind em 127.0.0.1.
+O catalogo permanece somente leitura para consulta; as unicas escritas ocorrem
+em `/api/setup/*` (pasta raiz do primeiro acesso) e `/api/organize/*`
+(classificacao, plano e aplicacao com journal/undo), ambas gated por token de
+administracao, bloqueio de mesma origem (CSRF) e bind em 127.0.0.1. `/api/admin/*`
+cuida do registro local de licencas.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from djlife import __version__, admin, registry
 from djlife import license as license_mod
 from djlife.config import Config
-from djlife.ui import data, setup
+from djlife.ui import data, organize, setup
 
 ASSETS_DIR = Path(__file__).with_name("assets")
 CONTENT_TYPES = {
@@ -76,6 +79,19 @@ def _as_list(value: Any) -> list[str] | None:
     return filtered or None
 
 
+def _as_int_list(value: Any) -> list[int] | None:
+    """Converte uma lista de ids; distingue ausente (None) de vazia ([])."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    result: list[int] = []
+    for item in value:
+        try:
+            result.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
 def resolve_asset(name: str) -> Path | None:
     """Resolve um asset dentro de `ui/assets`, bloqueando travessia de diretorio."""
     candidate = (ASSETS_DIR / name).resolve()
@@ -85,11 +101,12 @@ def resolve_asset(name: str) -> Path | None:
 
 
 class _Server(ThreadingHTTPServer):
-    """Servidor com configuracao mutavel (setup do primeiro acesso) e job de scan."""
+    """Servidor com configuracao mutavel (setup do primeiro acesso) e jobs longos."""
 
     cfg: Config
     config_path: Path
     scan_job: setup.ScanJob | None
+    jobs: dict[str, organize.TaskJob]
 
     def __init__(
         self,
@@ -103,6 +120,7 @@ class _Server(ThreadingHTTPServer):
         self.cfg = cfg
         self.config_path = config_path
         self.scan_job = None
+        self.jobs = {}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -125,6 +143,11 @@ class _Handler(BaseHTTPRequestHandler):
         server = self.server
         return server.scan_job if isinstance(server, _Server) else None
 
+    @property
+    def jobs(self) -> dict[str, organize.TaskJob]:
+        server = self.server
+        return server.jobs if isinstance(server, _Server) else {}
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 
@@ -145,6 +168,9 @@ class _Handler(BaseHTTPRequestHandler):
         route = parsed.path
         if route.startswith("/api/setup/"):
             self._post_setup(route[len("/api/setup/") :])
+            return
+        if route.startswith("/api/organize/"):
+            self._post_organize(route[len("/api/organize/") :])
             return
         if not route.startswith("/api/admin/"):
             self._send_json({"error": "rota nao encontrada"}, status=404)
@@ -195,6 +221,15 @@ class _Handler(BaseHTTPRequestHandler):
                 cfg = setup.save_root(self.config_path, path)
                 cast(_Server, self.server).cfg = cfg
                 payload = setup.state(cfg, self.config_path)
+            elif endpoint == "files":
+                admin.require_token(self.config, self.headers.get("X-Admin-Token", ""))
+                cfg = setup.save_files(
+                    self.config_path,
+                    target=str(body.get("target", "")),
+                    strategy=str(body.get("strategy", "")),
+                )
+                cast(_Server, self.server).cfg = cfg
+                payload = setup.files_state(cfg)
             elif endpoint == "scan":
                 server = cast(_Server, self.server)
                 if server.scan_job is None or server.scan_job.status != "running":
@@ -206,7 +241,79 @@ class _Handler(BaseHTTPRequestHandler):
         except setup.SetupError as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
+        except admin.AdminUnavailable as exc:
+            self._send_json({"error": str(exc)}, status=403)
+            return
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
         self._send_json(payload)
+
+    def _post_organize(self, endpoint: str) -> None:
+        if not self._same_origin():
+            self._send_json({"error": "origem nao permitida"}, status=403)
+            return
+        try:
+            body = self._read_json_body()
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        token = self.headers.get("X-Admin-Token", "") or str(body.get("token", ""))
+        try:
+            admin.require_token(self.config, token)
+            payload = self._organize_action(endpoint, body)
+        except admin.AdminUnavailable as exc:
+            self._send_json({"error": str(exc)}, status=403)
+            return
+        except (organize.OrganizeError, setup.SetupError) as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        if payload is None:
+            self._send_json(
+                {"error": f"endpoint de organizacao desconhecido: {endpoint}"}, status=404
+            )
+            return
+        self._send_json(payload)
+
+    def _organize_action(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any] | None:
+        cfg = self.config
+        server = cast(_Server, self.server)
+        if endpoint == "scan":
+            job = server.scan_job
+            if job is None or job.status != "running":
+                job = setup.start_scan(cfg)
+                server.scan_job = job
+            return job.snapshot()
+        if endpoint == "classify":
+            task = server.jobs.get("classify")
+            if task is None or task.status != "running":
+                task = organize.start_classify(cfg)
+                server.jobs["classify"] = task
+            return task.snapshot()
+        if endpoint == "apply":
+            task = server.jobs.get("apply")
+            if task is None or task.status != "running":
+                task = organize.start_apply(
+                    cfg,
+                    track_ids=_as_int_list(body.get("track_ids")),
+                    write_tags=bool(body.get("write_tags", True)),
+                )
+                server.jobs["apply"] = task
+            return task.snapshot()
+        if endpoint == "undo":
+            task = server.jobs.get("undo")
+            if task is None or task.status != "running":
+                task = organize.start_undo(cfg, batch=_opt_str(body.get("batch")))
+                server.jobs["undo"] = task
+            return task.snapshot()
+        return None
+
+    def _job_snapshot(self, task: str) -> dict[str, Any]:
+        if task == "scan":
+            scan = self.scan_job
+            return scan.snapshot() if scan is not None else {"status": "idle"}
+        job = self.jobs.get(task)
+        return job.snapshot() if job is not None else organize.idle_snapshot(task)
 
     def _admin_action(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any] | None:
         cfg = self.config
@@ -304,6 +411,14 @@ class _Handler(BaseHTTPRequestHandler):
                 payload = data.versions(cfg, limit=_limit(query, 50))
             elif endpoint == "integrations":
                 payload = data.integrations(cfg)
+            elif endpoint == "organize/status":
+                payload = organize.status(cfg)
+            elif endpoint == "organize/plan":
+                payload = organize.plan_payload(cfg)
+            elif endpoint == "organize/history":
+                payload = organize.history(cfg, limit=_limit(query, 20))
+            elif endpoint == "organize/job":
+                payload = self._job_snapshot(query.get("task", [""])[0])
             elif endpoint == "capabilities":
                 payload = data.capabilities(cfg)
             elif endpoint == "version":
@@ -325,6 +440,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=503)
             return
         except setup.SetupError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        except organize.OrganizeError as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
         except registry.RegistryError as exc:

@@ -225,6 +225,47 @@ def _roots_line(roots: Sequence[str]) -> str:
     return "roots = [" + ", ".join(_toml_string(root) for root in roots) + "]"
 
 
+def _upsert_key(lines: list[str], section: str, key: str, new_line: str) -> None:
+    """Insere ou atualiza `key = ...` no bloco `section`, preservando o restante do arquivo.
+
+    A edicao e cirurgica: comentarios, chaves nao modeladas e demais blocos permanecem
+    intactos; valores multilinha da mesma chave sao substituidos por inteiro.
+    """
+    header = next((i for i, line in enumerate(lines) if line.strip() == f"[{section}]"), None)
+
+    if header is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend([f"[{section}]", new_line])
+        return
+
+    section_end = len(lines)
+    for i in range(header + 1, len(lines)):
+        if lines[i].lstrip().startswith("["):
+            section_end = i
+            break
+
+    pattern = re.compile(rf"\s*{re.escape(key)}\s*=")
+    index = next((i for i in range(header + 1, section_end) if pattern.match(lines[i])), None)
+    if index is None:
+        lines.insert(header + 1, new_line)
+        return
+
+    end = index
+    balance = lines[index].count("[") - lines[index].count("]")
+    while balance > 0 and end + 1 < section_end:
+        end += 1
+        balance += lines[end].count("[") - lines[end].count("]")
+    lines[index : end + 1] = [new_line]
+
+
+def _write_lines(path: Path | str, lines: list[str]) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return target
+
+
 def update_library_roots(path: Path | str, roots: Sequence[str]) -> Path:
     """Grava `library.roots` no arquivo de configuracao preservando o restante do conteudo.
 
@@ -236,33 +277,21 @@ def update_library_roots(path: Path | str, roots: Sequence[str]) -> Path:
     if target.exists():
         lines = target.read_text(encoding="utf-8-sig").splitlines()
 
-    new_line = _roots_line(roots)
-    header = next((i for i, line in enumerate(lines) if line.strip() == "[library]"), None)
+    _upsert_key(lines, "library", "roots", _roots_line(roots))
+    return _write_lines(target, lines)
 
-    if header is None:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.extend(["[library]", new_line])
-    else:
-        section_end = len(lines)
-        for i in range(header + 1, len(lines)):
-            if lines[i].lstrip().startswith("["):
-                section_end = i
-                break
-        roots_index = next(
-            (i for i in range(header + 1, section_end) if re.match(r"\s*roots\s*=", lines[i])),
-            None,
+
+def update_files_settings(path: Path | str, *, target: str, strategy: str) -> Path:
+    """Grava `files.target` e `files.strategy`, preservando o restante do arquivo."""
+    if strategy not in FILE_STRATEGIES:
+        raise ValueError(
+            f"files.strategy inválido: {strategy!r}. Use um de {', '.join(FILE_STRATEGIES)}."
         )
-        if roots_index is None:
-            lines.insert(header + 1, new_line)
-        else:
-            end = roots_index
-            balance = lines[roots_index].count("[") - lines[roots_index].count("]")
-            while balance > 0 and end + 1 < section_end:
-                end += 1
-                balance += lines[end].count("[") - lines[end].count("]")
-            lines[roots_index : end + 1] = [new_line]
+    config_file = Path(path)
+    lines: list[str] = []
+    if config_file.exists():
+        lines = config_file.read_text(encoding="utf-8-sig").splitlines()
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return target
+    _upsert_key(lines, "files", "strategy", f"strategy = {_toml_string(strategy)}")
+    _upsert_key(lines, "files", "target", f"target = {_toml_string(target)}")
+    return _write_lines(config_file, lines)

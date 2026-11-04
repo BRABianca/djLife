@@ -33,6 +33,7 @@
   <nav class="tabs" id="tabs">
     <button class="tab is-active" data-view="overview">visao geral</button>
     <button class="tab" data-view="library">biblioteca</button>
+    <button class="tab" data-view="organize">organizar</button>
     <button class="tab" data-view="duplicates">duplicatas</button>
     <button class="tab" data-view="versions">versoes</button>
     <button class="tab" data-view="integrations">integracoes</button>
@@ -116,6 +117,104 @@
       <div class="lib-statusbar">
         <span id="library-status">0 faixas</span>
         <span id="library-status-right"></span>
+      </div>
+    </section>
+
+    <section class="view" id="view-organize">
+      <div class="view-head">
+        <h2>organizar</h2>
+        <p>Fluxo auditavel: varra, classifique, gere o plano, revise item a item e aplique com journal reversivel. A escrita no filesystem exige o modo owner/admin.</p>
+      </div>
+
+      <div class="banner beta hidden" id="organize-notice" role="note"></div>
+
+      <div class="kv panel hidden" id="organize-summary"></div>
+
+      <div class="panel" id="organize-gate">
+        <h3>acesso restrito</h3>
+        <form class="searchbar" id="organize-login">
+          <input type="password" id="organize-token" placeholder="token de administracao" autocomplete="off" />
+          <button type="submit" class="btn">entrar</button>
+        </form>
+        <div class="hint">Defina <code>[license] admin_token</code> no djlife.toml e reinicie o <code>djlife ui</code>. O token fica apenas nesta sessao do navegador.</div>
+      </div>
+
+      <div class="hidden" id="organize-console">
+        <div class="org-steps">
+          <div class="org-step-group">
+            <span class="org-step-label">1 · indexar</span>
+            <button type="button" class="btn" id="organize-scan">varrer pastas</button>
+            <button type="button" class="btn" id="organize-classify">classificar generos</button>
+          </div>
+          <div class="org-step-group">
+            <span class="org-step-label">2 · revisar</span>
+            <button type="button" class="btn" id="organize-plan">gerar plano</button>
+          </div>
+          <button type="button" class="btn ghost org-logout" id="organize-logout">sair</button>
+        </div>
+
+        <div class="panel org-config" id="organize-config">
+          <div class="org-panel-head">
+            <h3>destino da organizacao</h3>
+            <span class="chip signal" id="organize-config-state">nao definido</span>
+          </div>
+          <form class="searchbar org-config-form" id="organize-config-form">
+            <input type="text" id="organize-target" placeholder="ex.: D:\Musica Organizada" autocomplete="off" />
+            <select id="organize-strategy" aria-label="estrategia de arquivos"></select>
+            <button type="submit" class="btn">salvar destino</button>
+          </form>
+          <div class="hint">O destino pode ainda nao existir — a arvore <code>{genero}/{subgenero}/artista - titulo</code> e criada na aplicacao. <code>hardlink</code> preserva os originais; <code>move</code> realoca.</div>
+        </div>
+
+        <div class="panel org-job hidden" id="organize-job">
+          <div class="org-job-head">
+            <span class="org-job-label" id="organize-job-label">tarefa</span>
+            <span class="chip signal" id="organize-job-status">ocioso</span>
+          </div>
+          <div class="org-job-body" id="organize-job-body"></div>
+        </div>
+
+        <div class="panel hidden" id="organize-plan-panel">
+          <div class="org-panel-head">
+            <h3>plano de organizacao</h3>
+            <div class="org-panel-actions">
+              <span class="chip" id="organize-plan-summary">0 itens</span>
+              <button type="button" class="btn ghost" id="organize-select-all">selecionar prontos</button>
+              <button type="button" class="btn" id="organize-apply">aplicar prontos</button>
+            </div>
+          </div>
+          <div class="table-wrap org-table-wrap">
+            <table class="table" id="organize-table">
+              <thead>
+                <tr>
+                  <th class="org-check"><input type="checkbox" id="organize-check-all" aria-label="selecionar todos" /></th>
+                  <th>origem</th>
+                  <th>genero</th>
+                  <th>destino</th>
+                  <th>status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel" id="organize-history-panel">
+          <div class="org-panel-head">
+            <h3>lotes aplicados</h3>
+            <div class="org-panel-actions">
+              <button type="button" class="btn ghost" id="organize-history-refresh">atualizar</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="organize-history">
+              <thead>
+                <tr><th>lote</th><th>quando</th><th>estrategia</th><th>arquivos</th><th>tags</th><th>pendentes</th><th>acoes</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 

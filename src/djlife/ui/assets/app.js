@@ -310,15 +310,17 @@ function renderLibraryDetail() {
     ["tamanho", track.size ? `${(Number(track.size) / (1024 * 1024)).toFixed(1)} MB` : ""],
   ];
   body.innerHTML = `
-    <div class="lib-detail-title">${esc(track.title || "(sem titulo)")}</div>
-    <div class="lib-detail-sub">${esc(track.artist || "artista desconhecido")}</div>
-    ${track.is_missing ? '<span class="badge warn">arquivo ausente</span>' : ""}
+    <div class="lib-detail-ident">
+      <div class="lib-detail-title">${esc(track.title || "(sem titulo)")}</div>
+      <div class="lib-detail-sub">${esc(track.artist || "artista desconhecido")}</div>
+      ${track.is_missing ? '<span class="badge warn">arquivo ausente</span>' : ""}
+      <div class="lib-detail-path">${esc(track.path)}</div>
+    </div>
     <div class="lib-detail-grid">
       ${rows
         .map(([label, value]) => `<div class="row"><span>${esc(label)}</span><span>${esc(value || "-")}</span></div>`)
         .join("")}
     </div>
-    <div class="lib-detail-path">${esc(track.path)}</div>
   `;
 }
 
@@ -671,9 +673,425 @@ async function initAdminTab() {
   }
 }
 
+const ORGANIZE_TASK_LABELS = {
+  scan: "varredura de pastas",
+  classify: "classificacao de generos",
+  apply: "aplicacao do plano",
+  undo: "reversao de lote",
+};
+
+const ORGANIZE_STATUS_LABELS = {
+  idle: "ocioso",
+  running: "executando",
+  done: "concluido",
+  error: "erro",
+};
+
+const ORGANIZE_RESULT_LABELS = {
+  seen: "vistos",
+  new: "novos",
+  updated: "atualizados",
+  missing: "ausentes",
+  indexed: "indexadas",
+  errors: "erros",
+  taxonomy_version: "taxonomia",
+  genres: "generos",
+  layers: "camadas",
+  rules: "regras",
+  tracks: "faixas",
+  tagged: "marcadas",
+  ruled: "por regras",
+  unresolved: "sem resolucao",
+  inserted: "inseridas",
+  batch: "lote",
+  strategy: "estrategia",
+  linked: "hardlinks",
+  moved: "movidas",
+  skipped: "ignoradas",
+  applied: "aplicadas",
+  requested: "selecionadas",
+  removed: "removidos",
+  restored: "restaurados",
+  untagged: "tags removidas",
+};
+
+const ORGANIZE_PLAN_LABELS = {
+  ready: "pronto",
+  exists: "ja existe",
+  conflict: "conflito",
+  unclassified: "sem genero",
+};
+
+const ORGANIZE_PLAN_TONE = {
+  ready: "ok",
+  exists: "muted",
+  conflict: "warn",
+  unclassified: "warn",
+};
+
+const ORGANIZE_STRATEGY_LABELS = {
+  hardlink: "hardlink (preserva originais)",
+  move: "mover (realoca originais)",
+  tag_only: "somente tags (sem mover)",
+};
+
+const ORGANIZE = {
+  plan: null,
+  selected: new Set(),
+  timer: null,
+};
+
+function organizeBusy(busy) {
+  ["#organize-scan", "#organize-classify", "#organize-plan"].forEach((selector) => {
+    const el = $(selector);
+    if (el) el.disabled = busy;
+  });
+  const checkAll = $("#organize-check-all");
+  if (checkAll) checkAll.disabled = busy;
+}
+
+function renderOrganizeConfig(files) {
+  const select = $("#organize-strategy");
+  const strategies = (files && files.strategies) || [];
+  select.innerHTML = strategies
+    .map(
+      (name) =>
+        `<option value="${esc(name)}">${esc(ORGANIZE_STRATEGY_LABELS[name] || name)}</option>`
+    )
+    .join("");
+  if (files && files.strategy) select.value = files.strategy;
+
+  $("#organize-target").value = (files && files.target) || "";
+
+  const chip = $("#organize-config-state");
+  chip.textContent = files && files.target ? "configurado" : "nao definido";
+  chip.className = `chip signal ${files && files.target ? "ok" : "warn"}`;
+}
+
+function renderOrganizeSummary(status) {
+  const roots = status.roots && status.roots.length
+    ? status.roots.map((root) => `<span title="${esc(root)}">${esc(shorten(root, 44))}</span>`).join(" · ")
+    : "nao configurada";
+  $("#organize-summary").innerHTML = `
+    <div class="kv-row"><span>raizes de varredura</span><span>${roots}</span></div>
+    <div class="kv-row"><span>destino organizado</span><span title="${esc(status.target || "")}">${status.target ? esc(shorten(status.target, 48)) : "nao definido"}</span></div>
+    <div class="kv-row"><span>estrategia</span><span>${esc(status.strategy)}</span></div>
+    <div class="kv-row"><span>template</span><span class="mono">${esc(status.template)}</span></div>
+    <div class="kv-row"><span>catalogo</span><span title="${esc(status.catalog)}">${esc(shorten(status.catalog, 48))}</span></div>
+  `;
+  renderOrganizeConfig(status);
+}
+
+function organizeResultValue(value) {
+  if (Array.isArray(value)) return value.map((item) => esc(item)).join(", ") || "-";
+  if (value === null || value === undefined || value === "") return "-";
+  return esc(value);
+}
+
+function renderOrganizeJob(job) {
+  const panel = $("#organize-job");
+  if (!job || !job.status || job.status === "idle") {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  $("#organize-job-label").textContent = ORGANIZE_TASK_LABELS[job.task] || job.task || "tarefa";
+
+  const status = job.status;
+  const chip = $("#organize-job-status");
+  chip.textContent = ORGANIZE_STATUS_LABELS[status] || status;
+  chip.className = `chip signal ${
+    status === "running" ? "warn" : status === "done" ? "ok" : status === "error" ? "fail" : ""
+  }`.trim();
+
+  const isScan = job.result === undefined;
+  const result = isScan
+    ? {
+        seen: job.seen,
+        new: job.new,
+        updated: job.updated,
+        missing: job.missing,
+        indexed: job.indexed,
+        errors: job.errors,
+      }
+    : job.result || {};
+  const rows = Object.entries(result)
+    .map(
+      ([key, value]) => `<div class="kv-row">
+        <span>${esc(ORGANIZE_RESULT_LABELS[key] || key)}</span>
+        <span>${organizeResultValue(value)}</span>
+      </div>`
+    )
+    .join("");
+  const message = job.message || job.error || "";
+  const note = message ? `<div class="org-note">${esc(message)}</div>` : "";
+  $("#organize-job-body").innerHTML = rows
+    ? `<div class="kv org-kv">${rows}</div>${note}`
+    : note || `<div class="empty">sem detalhes</div>`;
+}
+
+function organizeRow(item) {
+  const tone = ORGANIZE_PLAN_TONE[item.status] || "";
+  const check = item.status === "ready"
+    ? `<input type="checkbox" class="org-item-check" data-track="${item.track_id}"${
+        ORGANIZE.selected.has(item.track_id) ? " checked" : ""
+      } />`
+    : `<span class="org-lock" title="somente itens prontos podem ser aplicados">-</span>`;
+  const genre = [item.genre, item.subgenre].filter(Boolean).join(" / ") || "-";
+  return `<tr class="org-row">
+    <td class="org-check">${check}</td>
+    <td class="mono" title="${esc(item.src)}">${esc(shorten(item.src, 46))}</td>
+    <td>${esc(genre)}</td>
+    <td class="mono" title="${esc(item.dst || "")}">${esc(item.dst ? shorten(item.dst, 46) : "-")}</td>
+    <td><span class="badge ${tone}">${esc(ORGANIZE_PLAN_LABELS[item.status] || item.status)}</span></td>
+  </tr>`;
+}
+
+function syncOrganizeSelection() {
+  const items = (ORGANIZE.plan && ORGANIZE.plan.items) || [];
+  const ready = items.filter((item) => item.status === "ready");
+  const count = ORGANIZE.selected.size;
+  const all = $("#organize-check-all");
+  all.checked = ready.length > 0 && count === ready.length;
+  all.indeterminate = count > 0 && count < ready.length;
+  const button = $("#organize-apply");
+  button.disabled = ready.length === 0;
+  button.textContent = count ? `aplicar ${num(count)} selecionados` : "aplicar prontos";
+}
+
+function renderOrganizePlan() {
+  const plan = ORGANIZE.plan;
+  if (!plan) return;
+  const summary = plan.summary || {};
+  $("#organize-plan-summary").textContent =
+    `${num(summary.total)} itens · ${num(summary.ready)} prontos · ${num(summary.conflict)} conflitos · ${num(summary.unclassified)} sem genero`;
+
+  const ready = new Set(
+    plan.items.filter((item) => item.status === "ready").map((item) => item.track_id)
+  );
+  ORGANIZE.selected = new Set([...ORGANIZE.selected].filter((id) => ready.has(id)));
+
+  $("#organize-table tbody").innerHTML = plan.items.length
+    ? plan.items.map(organizeRow).join("")
+    : `<tr><td colspan="5" class="empty">nenhum item no plano</td></tr>`;
+  syncOrganizeSelection();
+}
+
+async function refreshOrganizePlan() {
+  const panel = $("#organize-plan-panel");
+  try {
+    ORGANIZE.plan = await api("/api/organize/plan");
+  } catch (err) {
+    ORGANIZE.plan = null;
+    panel.classList.remove("hidden");
+    $("#organize-plan-summary").textContent = "indisponivel";
+    $("#organize-table tbody").innerHTML = `<tr><td colspan="5" class="empty">${esc(err.message)}</td></tr>`;
+    $("#organize-apply").disabled = true;
+    return;
+  }
+  panel.classList.remove("hidden");
+  renderOrganizePlan();
+}
+
+function renderOrganizeHistory(data) {
+  const rows = (data && data.batches) || [];
+  $("#organize-history tbody").innerHTML = rows.length
+    ? rows
+        .map(
+          (row) => `<tr>
+            <td class="mono">${esc(row.batch)}</td>
+            <td class="mono">${esc(row.created_at)}</td>
+            <td>${esc(row.strategy)}</td>
+            <td class="num">${num(row.files)}</td>
+            <td class="num">${num(row.tags)}</td>
+            <td>${
+              row.pending
+                ? `<span class="badge warn">${num(row.pending)} pendentes</span>`
+                : `<span class="badge muted">aplicado</span>`
+            }</td>
+            <td>${
+              row.pending
+                ? `<button class="btn ghost" data-batch="${esc(row.batch)}">desfazer</button>`
+                : ""
+            }</td>
+          </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="7" class="empty">nenhum lote aplicado ainda</td></tr>`;
+}
+
+async function refreshOrganizeHistory() {
+  try {
+    renderOrganizeHistory(await api("/api/organize/history?limit=20"));
+  } catch (err) {
+    $("#organize-history tbody").innerHTML = `<tr><td colspan="7" class="empty">${esc(err.message)}</td></tr>`;
+  }
+}
+
+function pollOrganizeJob(task) {
+  window.clearTimeout(ORGANIZE.timer);
+  ORGANIZE.timer = window.setTimeout(async () => {
+    let job = null;
+    try {
+      job = await api(`/api/organize/job?task=${encodeURIComponent(task)}`);
+    } catch (err) {
+      showBanner(`Falha ao consultar a tarefa: ${err.message}`);
+    }
+    if (job) renderOrganizeJob(job);
+    if (job && job.status === "running") {
+      pollOrganizeJob(task);
+      return;
+    }
+    organizeBusy(false);
+    await refreshOrganizeHistory();
+    await refreshOrganizePlan();
+  }, 1200);
+}
+
+async function startOrganizeTask(task, body = {}) {
+  organizeBusy(true);
+  try {
+    showBanner("");
+    const job = await adminFetch(`/api/organize/${task}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    renderOrganizeJob(job);
+    pollOrganizeJob(task);
+  } catch (err) {
+    organizeBusy(false);
+    showBanner(`Falha em ${ORGANIZE_TASK_LABELS[task] || task}: ${err.message}`);
+  }
+}
+
+async function saveOrganizeConfig() {
+  const target = $("#organize-target").value.trim();
+  const strategy = $("#organize-strategy").value;
+  if (!target) {
+    showBanner("informe a pasta de destino da organizacao");
+    return;
+  }
+  try {
+    showBanner("");
+    await adminFetch("/api/setup/files", {
+      method: "POST",
+      body: JSON.stringify({ target, strategy }),
+    });
+    showBanner("destino da organizacao salvo");
+    renderOrganizeSummary(await api("/api/organize/status"));
+    ORGANIZE.selected = new Set();
+    await refreshOrganizePlan();
+  } catch (err) {
+    showBanner(`Falha ao salvar destino: ${err.message}`);
+  }
+}
+
+async function loadOrganize() {
+  const adminStatus = await api("/api/admin/status");
+  const notice = $("#organize-notice");
+  const gate = $("#organize-gate");
+  const consoleEl = $("#organize-console");
+  notice.classList.remove("hidden");
+
+  try {
+    renderOrganizeSummary(await api("/api/organize/status"));
+    $("#organize-summary").classList.remove("hidden");
+  } catch (err) {
+    $("#organize-summary").classList.add("hidden");
+  }
+
+  if (!adminStatus.enabled) {
+    notice.textContent =
+      "Organizacao desabilitada: defina [license] admin_token no djlife.toml e reinicie o `djlife ui`. A escrita no filesystem exige o modo owner/admin.";
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+
+  notice.textContent = adminStatus.owner
+    ? "Modo owner ativo: organizacao liberada. Toda aplicacao registra journal e pode ser revertida."
+    : "Informe o token de administracao para varrer, classificar e aplicar o plano.";
+
+  if (!adminToken()) {
+    gate.classList.remove("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+
+  gate.classList.add("hidden");
+  consoleEl.classList.remove("hidden");
+  await refreshOrganizeHistory();
+  await refreshOrganizePlan();
+}
+
+$("#organize-login").addEventListener("submit", (event) => {
+  event.preventDefault();
+  setAdminToken($("#organize-token").value.trim());
+  $("#organize-token").value = "";
+  run("organize");
+});
+
+$("#organize-logout").addEventListener("click", () => {
+  setAdminToken("");
+  run("organize");
+});
+
+$("#organize-scan").addEventListener("click", () => startOrganizeTask("scan"));
+$("#organize-classify").addEventListener("click", () => startOrganizeTask("classify"));
+$("#organize-plan").addEventListener("click", refreshOrganizePlan);
+$("#organize-history-refresh").addEventListener("click", refreshOrganizeHistory);
+
+$("#organize-config-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveOrganizeConfig();
+});
+
+$("#organize-table").addEventListener("change", (event) => {
+  const box = event.target.closest(".org-item-check");
+  if (!box) return;
+  const id = Number(box.dataset.track);
+  if (box.checked) ORGANIZE.selected.add(id);
+  else ORGANIZE.selected.delete(id);
+  syncOrganizeSelection();
+});
+
+$("#organize-check-all").addEventListener("change", (event) => {
+  const items = (ORGANIZE.plan && ORGANIZE.plan.items) || [];
+  const ready = items.filter((item) => item.status === "ready");
+  ORGANIZE.selected = event.target.checked ? new Set(ready.map((item) => item.track_id)) : new Set();
+  renderOrganizePlan();
+});
+
+$("#organize-select-all").addEventListener("click", () => {
+  const items = (ORGANIZE.plan && ORGANIZE.plan.items) || [];
+  const ready = items.filter((item) => item.status === "ready");
+  const allSelected = ready.length > 0 && ORGANIZE.selected.size === ready.length;
+  ORGANIZE.selected = allSelected ? new Set() : new Set(ready.map((item) => item.track_id));
+  renderOrganizePlan();
+});
+
+$("#organize-apply").addEventListener("click", () => {
+  const ids = [...ORGANIZE.selected];
+  const body = ids.length ? { track_ids: ids } : {};
+  const label = ids.length
+    ? `${ids.length} item(ns) selecionado(s)`
+    : "todos os itens prontos";
+  if (!window.confirm(`Aplicar o plano (${label})? Hardlinks e tags DJLIFE_* serao gravados.`)) return;
+  startOrganizeTask("apply", body);
+});
+
+$("#organize-history").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-batch]");
+  if (!button) return;
+  const batch = button.dataset.batch;
+  if (!window.confirm(`Reverter o lote ${batch}? Hardlinks e moves serao desfeitos.`)) return;
+  startOrganizeTask("undo", { batch });
+});
+
 const loaders = {
   overview: loadOverview,
   library: loadLibrary,
+  organize: loadOrganize,
   duplicates: loadDuplicates,
   versions: loadVersions,
   integrations: loadIntegrations,
