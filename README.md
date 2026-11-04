@@ -87,19 +87,32 @@ djlife export --apply
 djlife duplicates
 djlife versions
 
-# 8. Interface web local (cyberpunk, somente leitura)
+# 8. Oferta premium planejada
+djlife premium
+
+# 9. Licenciamento offline do premium
+djlife license machine-id
+djlife license generate-keypair
+djlife license issue --customer-id CLIENTE --plan lifetime --bind-current-machine
+djlife license status
+
+# 10. Importação online com yt-dlp (premium; exige licença)
+djlife import "https://..."            # dry-run: lê os metadados
+djlife import "https://..." --apply    # baixa para --out (padrão: downloads/)
+
+# 11. Interface web local (Tech-Noir, somente leitura)
 djlife ui
 
-# 9. Diagnóstico do ambiente e do catálogo (somente leitura)
+# 12. Diagnóstico do ambiente e do catálogo (somente leitura)
 djlife doctor
 ```
 
 Comandos que alteram arquivos ou bancos DJ são **dry-run por padrão** — `analyze`, `embed`,
-`neighbors`, `dedupe`, `export` e `relink` só executam com `--apply`. A organização do filesystem
-segue o fluxo `plan` (dry-run) → `apply` (executa, pede confirmação) → `undo` (reverte pelo
-journal). O `review` não é dry-run: grava a decisão do usuário no **catálogo** (`source=manual`,
-que passa a valer sobre as fontes automáticas) e não toca o filesystem. Lista completa:
-`djlife --help`.
+`neighbors`, `dedupe`, `export`, `import` e `relink` só executam com `--apply`. A organização do
+filesystem segue o fluxo `plan` (dry-run) → `apply` (executa, pede confirmação) → `undo`
+(reverte pelo journal). O `review` não é dry-run: grava a decisão do usuário no **catálogo**
+(`source=manual`, que passa a valer sobre as fontes automáticas) e não toca o filesystem. Lista
+completa: `djlife --help`.
 
 > As integrações com **Rekordbox/Serato estão em beta** — não há garantia de funcionamento. O
 > fluxo suportado e priorizado é a organização no **filesystem** (`plan`/`apply`).
@@ -119,6 +132,7 @@ Instale apenas o que precisar (a instalação base já cobre o núcleo):
 | `rekordbox` | Ler/relink de `master.db` do Rekordbox 6/7 (beta) | `pip install -e ".[rekordbox]"` |
 | `essentia` | Backend alternativo de análise (Linux/WSL2; sem wheel no Windows) | `pip install -e ".[essentia]"` |
 | `packaging` | Gerar o executável com PyInstaller | `pip install -e ".[packaging]"` |
+| `premium` | Base premium com importação online via `yt-dlp` | `pip install -e ".[premium]"` |
 | `dev` | Testes, lint e tipagem (pytest/ruff/mypy) | `pip install -e ".[dev]"` |
 
 Exemplo com a camada L3/L4:
@@ -132,6 +146,54 @@ djlife neighbors                 # dry-run; --apply propõe gênero para faixas 
 
 > O `essentia` não publica wheel para Windows e exige `python-ffmpeg`. No Windows use `librosa`
 > (extra `analysis`), que é o backend padrão.
+
+Exemplo com a camada premium preparada:
+
+```powershell
+pip install -e ".[premium]"
+djlife premium
+djlife import "https://..."            # recurso premium: exige licença válida
+djlife import "https://..." --apply    # baixa o áudio; depois `djlife scan downloads/`
+```
+
+> A fase atual prepara os planos **mensal** e **vitalício** dentro do app e adiciona o extra
+> opcional `yt-dlp`. A venda/liberação pode ser feita de forma **interpessoal/manual**, sem
+> intermediário neste momento. O comando `djlife import` é o primeiro recurso **premium de
+> fato**: ele consome o gate de licença (`premium.ytdlp_import`) e é bloqueado sem licença
+> válida.
+
+### Licença offline do premium
+
+O premium agora suporta:
+
+- **licença local assinada por Ed25519**
+- **vínculo opcional por hash da máquina**
+- **expiração** para plano mensal
+- **verificação offline** no app
+
+Fluxo sugerido:
+
+```powershell
+# 1. gerar chaves (faça isso uma vez e guarde a privada fora do app)
+djlife license generate-keypair
+
+# 2. no computador do cliente, obter o hash da máquina
+djlife license machine-id
+
+# 3. emitir a licença manualmente
+djlife license issue --customer-id CLIENTE --plan monthly --days 30 --machine-hash HASH_DO_CLIENTE
+
+# 4. conferir o status da licença carregada
+djlife license status
+```
+
+Configuração opcional no `djlife.toml`:
+
+```toml
+[license]
+public_key = "C:\\caminho\\license_public_key.pem"
+license_file = "C:\\caminho\\license.json"
+```
 
 ---
 
