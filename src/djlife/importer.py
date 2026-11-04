@@ -20,6 +20,10 @@ class ImportUnavailable(RuntimeError):
     """O backend de importacao (yt-dlp) nao esta instalado."""
 
 
+class ImportFailed(RuntimeError):
+    """O yt-dlp nao conseguiu ler os metadados de uma URL."""
+
+
 @dataclass(frozen=True)
 class ImportCandidate:
     url: str
@@ -75,7 +79,10 @@ def probe(urls: Sequence[str]) -> list[ImportCandidate]:
     candidates: list[ImportCandidate] = []
     with yt_dlp.YoutubeDL(options) as ydl:
         for url in urls:
-            info: dict[str, Any] = ydl.extract_info(url, download=False)
+            try:
+                info: dict[str, Any] = ydl.extract_info(url, download=False)
+            except Exception as exc:  # erro de terceiro (URL indisponivel/geo): mensagem limpa
+                raise ImportFailed(f"falha ao ler metadados de {url}: {exc}") from exc
             candidates.append(_candidate(url, info))
     return candidates
 

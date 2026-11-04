@@ -1558,7 +1558,7 @@ def premium_cmd(
     console.print(_license_status_table(premium.license_status(cfg)))
 
     console.print(f"[dim]{payload['notice']}[/dim]")
-    console.print(f"Extra opcional: [bold]{payload['install']}[/bold]")
+    console.print(f"Extra opcional: [bold]{escape(str(payload['install']))}[/bold]")
 
 
 app.command(name="premium")(premium_cmd)
@@ -1623,7 +1623,7 @@ def import_cmd(
             candidates = importer.probe(urls)
             _print_import_candidates(candidates)
             console.print("[dim]Dry-run: use --apply para baixar.[/dim]")
-    except importer.ImportUnavailable as exc:
+    except (importer.ImportUnavailable, importer.ImportFailed) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from exc
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -102,6 +103,40 @@ def test_import_without_extra_reports_hint(tmp_path, monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "yt-dlp" in result.stdout
+
+
+def test_import_reports_extractor_failure(tmp_path, monkeypatch) -> None:
+    config = _licensed_config(tmp_path)
+
+    def boom(urls):
+        raise importer.ImportFailed("falha ao ler metadados: video indisponivel")
+
+    monkeypatch.setattr(importer, "probe", boom)
+
+    result = runner.invoke(app, ["import", "https://example.com/x", "--config", str(config)])
+
+    assert result.exit_code == 1
+    assert "indisponivel" in result.stdout
+
+
+def test_probe_wraps_extractor_errors(monkeypatch) -> None:
+    class FakeYDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def extract_info(self, url, download=False):
+            raise RuntimeError("video indisponivel")
+
+    monkeypatch.setattr(importer, "_ytdlp", lambda: SimpleNamespace(YoutubeDL=FakeYDL))
+
+    with pytest.raises(importer.ImportFailed):
+        importer.probe(["https://example.com/x"])
 
 
 def test_probe_raises_when_extra_missing(monkeypatch) -> None:
