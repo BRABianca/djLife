@@ -270,6 +270,88 @@
         <h3>instalacao</h3>
         <div class="safe" id="premium-install"></div>
       </div>
+
+      <div class="panel hidden" id="premium-download">
+        <div class="org-panel-head">
+          <h3>painel de download</h3>
+          <span class="chip signal" id="download-state">-</span>
+        </div>
+        <div class="banner beta" id="download-notice" role="note"></div>
+
+        <div class="hidden" id="download-gate">
+          <form class="searchbar" id="download-login">
+            <input type="password" id="download-token" placeholder="token de administracao" autocomplete="off" />
+            <button type="submit" class="btn">entrar</button>
+          </form>
+          <div class="hint">O download exige <code>[license] admin_token</code> e uma licenca com o recurso <code>premium.download</code>.</div>
+        </div>
+
+        <div class="hidden" id="download-console">
+          <form class="org-config-form" id="download-form">
+            <textarea id="download-urls" rows="3" placeholder="uma URL por linha" autocomplete="off" spellcheck="false"></textarea>
+            <div class="searchbar">
+              <input type="text" id="download-target" placeholder="destino (ex.: downloads)" autocomplete="off" />
+              <select id="download-format" aria-label="formato do download"></select>
+              <button type="button" class="btn" id="download-probe">inspecionar</button>
+              <button type="button" class="btn" id="download-start">baixar</button>
+            </div>
+            <div class="hint">Inspecionar le apenas os metadados (dry-run). Baixar grava o audio no destino e sugere <code>djlife scan</code>.</div>
+          </form>
+
+          <div class="panel org-job hidden" id="download-job">
+            <div class="org-job-head">
+              <span class="org-job-label" id="download-job-label">download</span>
+              <span class="chip signal" id="download-job-status">ocioso</span>
+            </div>
+            <div class="org-job-body" id="download-job-body"></div>
+          </div>
+
+          <div class="table-wrap org-table-wrap">
+            <table class="table" id="download-table">
+              <thead>
+                <tr><th>titulo</th><th>canal</th><th>duracao</th><th>formato</th></tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="4" class="empty">sem resultados ainda</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="premium-curation">
+        <div class="org-panel-head">
+          <h3>curadoria assistida</h3>
+          <span class="chip signal" id="curation-state">-</span>
+        </div>
+        <div class="banner beta" id="curation-notice" role="note"></div>
+
+        <div class="hidden" id="curation-gate">
+          <form class="searchbar" id="curation-login">
+            <input type="password" id="curation-token" placeholder="token de administracao" autocomplete="off" />
+            <button type="submit" class="btn">entrar</button>
+          </form>
+          <div class="hint">A curadoria grava a decisao no catalogo e exige <code>[license] admin_token</code> e uma licenca com o recurso <code>premium.assisted_curation</code>.</div>
+        </div>
+
+        <div class="hidden" id="curation-console">
+          <div class="searchbar">
+            <button type="button" class="btn" id="curation-refresh">atualizar fila</button>
+            <span class="chip signal" id="curation-count">0 pendentes</span>
+          </div>
+          <div class="table-wrap org-table-wrap">
+            <table class="table" id="curation-table">
+              <thead>
+                <tr><th>faixa</th><th>conflito</th><th>fontes</th><th>genero</th><th></th></tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" class="empty">sem conflitos pendentes</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="hint">Cada decisao grava <code>source=manual</code> (prioridade maxima) e realimenta a camada <code>learned</code>. Depois de revisar, rode <code>djlife learn</code>.</div>
+        </div>
+      </div>
     </section>
 
     <section class="view" id="view-manual">

@@ -2,10 +2,11 @@
 
 Serve os assets embutidos em `ui/assets` e expoe endpoints JSON em `/api/*`.
 O catalogo permanece somente leitura para consulta; as unicas escritas ocorrem
-em `/api/setup/*` (pasta raiz do primeiro acesso) e `/api/organize/*`
-(classificacao, plano e aplicacao com journal/undo), ambas gated por token de
-administracao, bloqueio de mesma origem (CSRF) e bind em 127.0.0.1. `/api/admin/*`
-cuida do registro local de licencas.
+em `/api/setup/*` (pasta raiz do primeiro acesso), `/api/organize/*`
+(classificacao, plano e aplicacao com journal/undo) e `/api/premium/*`
+(download online e curadoria assistida), todas gated por token de administracao,
+bloqueio de mesma origem (CSRF) e bind em 127.0.0.1. `/api/admin/*` cuida do
+registro local de licencas.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 from djlife import __version__, admin, registry
 from djlife import license as license_mod
 from djlife.config import Config
-from djlife.ui import data, organize, setup
+from djlife.ui import curation, data, download, jobs, organize, setup
 
 ASSETS_DIR = Path(__file__).with_name("assets")
 CONTENT_TYPES = {
@@ -106,7 +107,7 @@ class _Server(ThreadingHTTPServer):
     cfg: Config
     config_path: Path
     scan_job: setup.ScanJob | None
-    jobs: dict[str, organize.TaskJob]
+    jobs: dict[str, jobs.TaskJob]
 
     def __init__(
         self,
@@ -144,7 +145,7 @@ class _Handler(BaseHTTPRequestHandler):
         return server.scan_job if isinstance(server, _Server) else None
 
     @property
-    def jobs(self) -> dict[str, organize.TaskJob]:
+    def jobs(self) -> dict[str, jobs.TaskJob]:
         server = self.server
         return server.jobs if isinstance(server, _Server) else {}
 
@@ -171,6 +172,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if route.startswith("/api/organize/"):
             self._post_organize(route[len("/api/organize/") :])
+            return
+        if route.startswith("/api/premium/"):
+            self._post_premium(route[len("/api/premium/") :])
             return
         if not route.startswith("/api/admin/"):
             self._send_json({"error": "rota nao encontrada"}, status=404)
@@ -308,12 +312,71 @@ class _Handler(BaseHTTPRequestHandler):
             return task.snapshot()
         return None
 
+    def _post_premium(self, endpoint: str) -> None:
+        if not self._same_origin():
+            self._send_json({"error": "origem nao permitida"}, status=403)
+            return
+        try:
+            body = self._read_json_body()
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        token = self.headers.get("X-Admin-Token", "") or str(body.get("token", ""))
+        try:
+            admin.require_token(self.config, token)
+            payload = self._premium_action(endpoint, body)
+        except admin.AdminUnavailable as exc:
+            self._send_json({"error": str(exc)}, status=403)
+            return
+        except download.DownloadUnavailable as exc:
+            self._send_json({"error": str(exc)}, status=403)
+            return
+        except curation.CurationUnavailable as exc:
+            self._send_json({"error": str(exc)}, status=403)
+            return
+        except (download.DownloadError, curation.CurationError) as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        if payload is None:
+            self._send_json({"error": f"endpoint premium desconhecido: {endpoint}"}, status=404)
+            return
+        self._send_json(payload)
+
+    def _premium_action(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any] | None:
+        cfg = self.config
+        server = cast(_Server, self.server)
+        if endpoint == "probe":
+            task = server.jobs.get("probe")
+            if task is None or task.status != "running":
+                task = download.start_probe(cfg, body.get("urls"))
+                server.jobs["probe"] = task
+            return task.snapshot()
+        if endpoint == "download":
+            task = server.jobs.get("download")
+            if task is None or task.status != "running":
+                task = download.start_download(
+                    cfg,
+                    body.get("urls"),
+                    target=body.get("target"),
+                    audio_format=body.get("format"),
+                )
+                server.jobs["download"] = task
+            return task.snapshot()
+        if endpoint == "curation":
+            return curation.decide(
+                cfg,
+                body.get("track_id"),
+                body.get("genre_id"),
+                operator=_opt_str(body.get("operator")),
+            )
+        return None
+
     def _job_snapshot(self, task: str) -> dict[str, Any]:
         if task == "scan":
             scan = self.scan_job
             return scan.snapshot() if scan is not None else {"status": "idle"}
         job = self.jobs.get(task)
-        return job.snapshot() if job is not None else organize.idle_snapshot(task)
+        return job.snapshot() if job is not None else jobs.idle_snapshot(task)
 
     def _admin_action(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any] | None:
         cfg = self.config
@@ -419,6 +482,12 @@ class _Handler(BaseHTTPRequestHandler):
                 payload = organize.history(cfg, limit=_limit(query, 20))
             elif endpoint == "organize/job":
                 payload = self._job_snapshot(query.get("task", [""])[0])
+            elif endpoint == "premium/status":
+                payload = download.status(cfg)
+            elif endpoint == "premium/job":
+                payload = self._job_snapshot(query.get("task", [""])[0])
+            elif endpoint == "premium/curation":
+                payload = curation.queue_payload(cfg)
             elif endpoint == "capabilities":
                 payload = data.capabilities(cfg)
             elif endpoint == "version":
@@ -443,6 +512,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
             return
         except organize.OrganizeError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        except curation.CurationError as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
         except registry.RegistryError as exc:
