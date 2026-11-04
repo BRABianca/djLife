@@ -15,7 +15,7 @@ from typing import Any
 
 from djlife import config as config_mod
 from djlife import db, scanner, tags
-from djlife.config import Config
+from djlife.config import FILE_STRATEGIES, Config
 
 
 class SetupError(RuntimeError):
@@ -43,6 +43,17 @@ def state(cfg: Config, config_path: Path | str) -> dict[str, Any]:
         "catalog": str(cfg.db_path),
         "catalog_exists": cfg.db_path.exists(),
         "places": places(),
+    }
+
+
+def files_state(cfg: Config) -> dict[str, Any]:
+    """Destino/estrategia da arvore organizada (`[files]`) para a UI."""
+    return {
+        "target": str(cfg.files.target) if cfg.files.target else None,
+        "strategy": cfg.files.strategy,
+        "strategies": list(FILE_STRATEGIES),
+        "template": cfg.files.template,
+        "unknown_dir": cfg.files.unknown_dir,
     }
 
 
@@ -77,6 +88,24 @@ def save_root(config_path: Path | str, raw: str) -> Config:
     if not target.is_dir():
         raise SetupError(f"pasta invalida: {raw}")
     config_mod.update_library_roots(config_path, [str(target)])
+    return config_mod.load_config(config_path)
+
+
+def save_files(config_path: Path | str, *, target: str, strategy: str) -> Config:
+    """Grava `files.target`/`files.strategy` no TOML e recarrega a configuracao.
+
+    O destino pode ainda nao existir (o `apply` cria a arvore), mas nunca pode ser um
+    arquivo. A gravacao toca apenas o `djlife.toml` — nada do filesystem de musicas.
+    """
+    raw = target.strip()
+    if not raw:
+        raise SetupError("informe a pasta de destino da organizacao")
+    if strategy not in FILE_STRATEGIES:
+        raise SetupError(f"estrategia invalida: {strategy}")
+    destination = Path(raw).expanduser()
+    if destination.exists() and not destination.is_dir():
+        raise SetupError(f"destino invalido (nao e uma pasta): {raw}")
+    config_mod.update_files_settings(config_path, target=str(destination), strategy=strategy)
     return config_mod.load_config(config_path)
 
 
