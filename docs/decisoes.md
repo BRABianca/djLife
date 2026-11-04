@@ -656,3 +656,116 @@ contida para não violar a garantia de segurança da interface.
   explicitamente justificada e submetida às mesmas salvaguardas (token, `127.0.0.1`, isolamento
   do catálogo).
 
+---
+
+## ADR-0022 — Aprendizado a partir das correções do usuário (camada `learned`, k-NN)
+
+**Status:** aceita (2026-11-04)
+
+**Contexto**
+O catálogo guarda vários sinais por faixa em `track_genres` e a resolução de gênero segue
+`SOURCE_ORDER = {manual:0, tags:1, rules:2, embedding:3}` (ADR-0019: a curadoria manual tem
+precedência máxima). O `djlife review` **já grava** cada decisão humana como `source='manual'`,
+mas isso só decide caso a caso — **não realimenta** a classificação futura. Dados públicos de
+gênero são instáveis e imprecisos; a fonte mais confiável é o **próprio uso**. Falta fechar o
+ciclo: transformar as correções em aprendizado.
+
+**Decisão**
+
+1. **Camada `learned` (L3.5)**: nova fonte `learned` na resolução, inserida **logo acima do
+   `embedding`**: `manual < tags < rules < learned < embedding`. A inserção é **aditiva** — não
+   altera a ordem relativa das fontes existentes; sem correções, o comportamento é idêntico ao
+   atual.
+2. **k-NN sobre as correções (sem treino)**: cada decisão `source='manual'` vira um **vizinho
+   rotulado** no índice de embeddings (L3/L4). A classificação `learned` de uma faixa é o voto
+   dos `k` vizinhos rotulados, ponderado por similaridade e recência. **Não há retreinamento** de
+   modelo nem fine-tuning de foundation models (MERT/MuQ/CLAP) — descartado por custo,
+   inviabilidade offline e risco de esquecimento catastrófico.
+3. **Registro de feedback local (schema v5)**: nova tabela `feedback` com a correção explícita —
+   `proposed_genre_id` (o que o sistema propôs), `corrected_genre_id` (o que o usuário escolheu),
+   `source` da proposta, `confidence`, `score`, `model`/`model_version` do embedding, `operator`
+   e `created_at`. Migração **v4 → v5** idempotente em `db.migrate`. É o "banco de ML" local —
+   fonte de verdade do aprendizado.
+4. **Versionamento do índice**: o resultado do k-NN é gravado em `track_genres` como
+   `source='learned'` com `score` (similaridade do voto) e um `model_version` que identifica o
+   índice (modelo de embedding + versão) — reproduzível e auditável, no espírito de
+   `analysis_version`.
+5. **Explicabilidade obrigatória**: `djlife review`/`status` devem poder mostrar **por que** uma
+   faixa virou `learned` (quais vizinhos votaram), para o usuário confiar e corrigir de novo se
+   preciso.
+6. **Aprendizado nunca move arquivos**: a camada `learned` só produz **classificação**; qualquer
+   efeito físico continua passando por `plan`/`apply` (dry-run) — invariante do projeto.
+7. **Local-only, sem telemetria**: nada do feedback sai da máquina; nenhuma coleta central
+   (coerente com a ADR-0013 e a postura offline-first).
+8. **Limiar e recência**: os votos usam **decaimento temporal** (concept drift) e um `k`/limiar
+   mínimo de confiança; sem vizinhos rotulados suficientes (*cold start*), a faixa **não** recebe
+   `learned` e cai para as fontes atuais.
+
+**Consequências**
+- (+) fecha o ciclo: as correções do `review` passam a **melhorar** a classificação, sem
+  retreinar nada;
+- (+) custo baixo e offline: o "modelo" é o próprio índice de embeddings + os rótulos já
+  existentes;
+- (+) explicável e reversível — dá para mostrar os vizinhos que votaram e reprocessar;
+- (+) aditivo e seguro: enquanto não houver correções, o comportamento é idêntico ao de hoje;
+- (+) abre caminho para evoluções (probe linear versionado via `djlife train`, mineração de
+  regras, active learning) sem comprometer o núcleo;
+- (−) exige migração de schema (v4 → v5) e um novo rank na resolução (os testes de conflito
+  precisam cobrir `learned`);
+- (−) sujeito a *cold start*, desbalanceamento por gênero e viés idiossincrático do usuário —
+  mitigado por limiar e fallback;
+- (−) requer embeddings (`extras ml`/`muq`) para as faixas elegíveis; sem embeddings, a camada
+  fica inativa.
+
+---
+
+## ADR-0023 — Onboarding: seleção da pasta raiz no primeiro acesso
+
+**Status:** aceita (2026-11-04)
+
+**Contexto**
+A interface web nascia exigindo um `djlife.toml` já preenchido: sem `[library] roots`, o
+`djlife ui` abria um catálogo vazio e o usuário precisava voltar ao terminal para editar o
+arquivo. A primeira experiência precisa deixar o usuário **apontar a pasta raiz** (onde estão as
+músicas atuais e futuras) direto na aplicação. Isso reabre a questão da escrita vinda da UI, que
+a ADR-0013 fixou como somente leitura e a ADR-0021 já havia emendado (apenas para licenças).
+
+**Decisão**
+
+1. **Tela de boas-vindas só no primeiro uso**: quando não há `library.roots` configurado,
+   `GET /api/setup/status` devolve `configured = false` e a UI exibe o onboarding; com raiz
+   configurada, o fluxo normal (visão geral) segue sem interrupção. Não há reabertura automática.
+2. **Navegador de pastas embutido (server-side)**: `GET /api/setup/list?path=...` lista os
+   subdiretórios reais pelo servidor (stdlib `os.scandir`, via `scanner.extended` para caminhos
+   longos no Windows), ocultando entradas `.`/`$`. No Windows os pontos de partida são as
+   unidades existentes; nos demais, `/` e `~`. Sem dependências novas — funciona no `.exe`.
+3. **Escrita isolada em `/api/setup/*`**: as únicas rotas novas de escrita são
+   `POST /api/setup/root` (grava `library.roots`) e `POST /api/setup/scan` (dispara a varredura).
+   O **catálogo musical continua somente leitura** e **nada no filesystem de músicas é movido** —
+   `setup.save_root` toca apenas o `djlife.toml`. A varredura reusa `scanner.scan` +
+   `tags.index_tags`, a mesma trilha da CLI.
+4. **Edição cirúrgica do TOML**: `config.update_library_roots` reescreve **apenas** a linha
+   `roots = [...]` do bloco `[library]` (ou o insere no bloco, ou cria o bloco), preservando
+   comentários, chaves não modeladas e os demais blocos. Leitura em `utf-8-sig` para tolerar BOM.
+5. **Configuração mutável em runtime**: o servidor passa a carregar a `Config` e o caminho do
+   arquivo (`_Server.cfg`/`config_path`); após salvar a raiz, a config é recarregada e passa a
+   valer para os endpoints seguintes, sem reiniciar o processo.
+6. **Scan em segundo plano com status**: `POST /api/setup/scan` inicia uma thread (daemon) que
+   varre cada raiz e indexa as tags; `GET /api/setup/scan` devolve um snapshot
+   (`running`/`done`/`error` + `seen/new/updated/missing/indexed/errors`) para a UI acompanhar por
+   *polling*. A interface oferece "escanear agora" após salvar a raiz.
+7. **Mesmas salvaguardas da ADR-0021**: bind `127.0.0.1` e checagem de **mesma origem**
+   (`_same_origin`, bloqueio CSRF via header `Origin`) nas rotas de escrita; caminhos de arquivo
+   são validados (`is_dir`) antes de qualquer gravação.
+
+**Consequências**
+- (+) onboarding sem terminal: escolher a raiz e escanear pelo navegador, no espírito offline-first;
+- (+) o `djlife.toml` permanece a fonte da configuração, editado de forma mínima e legível;
+- (+) reuso do núcleo (`scanner`/`tags`) — a UI não reimplementa a varredura;
+- (+) a garantia "nada move arquivos" é preservada: o setup só grava configuração;
+- (−) a UI ganha uma segunda família de rotas de escrita; como na ADR-0021, toda nova rota precisa
+  justificativa e as mesmas salvaguardas;
+- (−) o status do scan vive em memória (por processo); reiniciar o servidor durante a varredura
+  perde o acompanhamento (a varredura pode ser refeita a qualquer momento).
+
+

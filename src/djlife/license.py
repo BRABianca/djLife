@@ -3,9 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
 import platform
 import subprocess
+import sys
 import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
@@ -138,7 +138,7 @@ def _key_id(public_key: Ed25519PublicKey) -> str:
 
 
 def _read_windows_machine_guid() -> str | None:
-    if os.name != "nt":
+    if sys.platform != "win32":
         return None
     try:
         import winreg

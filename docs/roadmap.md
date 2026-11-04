@@ -268,6 +268,62 @@ somente leitura da ADR-0013).
 com token válido e recusa sem ele; o catálogo musical permanece intocado; `pytest`
 (251 passed)/`ruff`/`mypy` verdes. ✔
 
+## Fase 17 — Aprendizado a partir das correções (camada `learned`) ✅
+
+> Spec: **ADR-0022**. Escopo aprovado: **k-NN sobre as correções** (sem treino de modelo).
+
+A resolução de gênero deve **aprender com as correções** do usuário, sem depender de dados
+externos (que são instáveis): cada decisão manual do `djlife review` realimenta uma camada
+`learned` por k-NN sobre os embeddings, inserida logo acima do `embedding` —
+`manual < tags < rules < learned < embedding`.
+
+- [x] `schema.sql`: tabela `feedback` (`proposed_genre_id`, `corrected_genre_id`, `source`,
+      `confidence`, `score`, `model`, `model_version`, `operator`, `created_at`) + migração
+      **v4 → v5** (`db.migrate`, `SCHEMA_VERSION = 5`)
+- [x] `curation.record_decision`: além do `source='manual'`, gravar o par
+      **proposta × correção** em `feedback`
+- [x] novo módulo `learning.py`: índice k-NN sobre embeddings de faixas com rótulo `manual`,
+      voto ponderado (similaridade × recência) com limiar; grava `source='learned'` em
+      `track_genres` com `score`/`model_version`
+- [x] `planner.SOURCE_ORDER`: inserir `"learned": 3` (aditivo) e promover `"embedding": 4`
+- [x] comando `djlife learn` (recomputa `learned`) + explicação dos vizinhos votantes no
+      `djlife review`/`status`
+- [x] `tests/test_learning.py`: k-NN vota com as correções; *cold start* não gera `learned`;
+      `learned` perde para `manual`/`rules` e vence `embedding`; migração v4 → v5
+
+**Critério:** após corrigir faixas via `review`, `djlife learn` grava `learned` nas faixas com
+vizinhos rotulados; a ordem vira `manual < tags < rules < learned < embedding`; sem correções o
+comportamento é **idêntico** ao atual; `pytest` (263 passed)/`ruff`/`mypy` verdes. ✔
+
+## Fase 18 — Biblioteca estilo Rekordbox e onboarding da pasta raiz ✅
+
+> Specs: **ADR-0023** (onboarding). Redesign da biblioteca alinhado a ADR-0013/ADR-0021.
+
+Duas frentes de interface: (a) a aba **biblioteca** no estilo Rekordbox (shell de 3 colunas com
+toolbar de busca, sidebar de coleção e tabela densa ordenável); (b) **primeiro acesso** guiado —
+o usuário escolhe a pasta raiz pelo próprio app e, em seguida, pode escanear.
+
+- [x] `index.html`/`app.css`/`app.js`: biblioteca com toolbar de busca, sidebar de gêneros
+      (inclui "sem gênero"), tabela ordenável (título/artista/álbum/gênero/BPM/tom/formato/
+      duração), painel de detalhe e barra de status; filtragem e ordenação **client-side** (L1)
+- [x] `config.update_library_roots`: grava `library.roots` no TOML preservando o restante do
+      arquivo (edição cirúrgica da linha `roots`)
+- [x] novo módulo `ui/setup.py`: `places`/`state`/`list_directory`/`save_root` e `ScanJob`/`start_scan`
+      (varredura em thread com snapshot de progresso)
+- [x] `ui/server.py`: `_Server` com `cfg`/`config_path` mutáveis; rotas `GET /api/setup/status`,
+      `GET /api/setup/list`, `GET /api/setup/scan`, `POST /api/setup/root`, `POST /api/setup/scan`;
+      bloqueio de **mesma origem** (CSRF)
+- [x] `cli.py`: o comando `ui` propaga `--config` como `config_path` para `serve`
+- [x] tela de boas-vindas (`index.html`/`app.js`/`app.css`): navegador de pastas + "usar esta
+      pasta" + painel de varredura com status; aparece **só** quando não há raiz configurada
+- [x] `tests/test_setup.py`: edição do TOML, listagem/salvamento da raiz e fluxo HTTP de setup
+      (status → list → root → scan)
+
+**Critério:** sem `library.roots`, o `djlife ui` abre o onboarding; escolher a pasta grava o
+`djlife.toml` sem perder o restante do arquivo; "escanear agora" indexa a biblioteca com status
+ao vivo; com raiz já configurada o app abre direto na visão geral; `ruff`/`mypy`/`pytest`
+(271 passed) verdes. ✔
+
 ## Riscos abertos
 
 - **Cues/beatgrids** ao mover arquivos → mitigado por hardlink (Fase 5) e relink (Fase 7).
@@ -276,4 +332,5 @@ com token válido e recusa sem ele; o catálogo musical permanece intocado; `pyt
 - **APIs externas descontinuadas** (Spotify audio-features, AcousticBrainz) → núcleo
   offline-first; Discogs `styles` como fonte principal.
 - **Exposição de caminhos locais pela interface** → servidor escuta em `127.0.0.1` por padrão,
-  somente leitura e sem dependências externas (nada sai da máquina).
+  sem dependências externas (nada sai da máquina). As escritas vindas da UI ficam isoladas em
+  `/api/setup/*` (ADR-0023, só configuração) e `/api/admin/*` (ADR-0021, só registro de licenças).

@@ -77,16 +77,32 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model, model_version);
 
 CREATE TABLE IF NOT EXISTS track_genres (
-    id         INTEGER PRIMARY KEY,
-    track_id   INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    genre_id   INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
-    source     TEXT NOT NULL,
-    confidence TEXT NOT NULL DEFAULT 'C',
-    score      REAL,
-    created_at TEXT NOT NULL,
+    id            INTEGER PRIMARY KEY,
+    track_id      INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    genre_id      INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+    source        TEXT NOT NULL,
+    confidence    TEXT NOT NULL DEFAULT 'C',
+    score         REAL,
+    model_version TEXT,
+    created_at    TEXT NOT NULL,
     UNIQUE (track_id, genre_id, source)
 );
 CREATE INDEX IF NOT EXISTS idx_track_genres_track ON track_genres(track_id);
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id                 INTEGER PRIMARY KEY,
+    track_id           INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    proposed_genre_id  INTEGER REFERENCES genres(id) ON DELETE SET NULL,
+    corrected_genre_id INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+    source             TEXT,
+    confidence         TEXT,
+    score              REAL,
+    model              TEXT,
+    model_version      TEXT,
+    operator           TEXT,
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_track ON feedback(track_id);
 
 CREATE TABLE IF NOT EXISTS scan_runs (
     id            INTEGER PRIMARY KEY,

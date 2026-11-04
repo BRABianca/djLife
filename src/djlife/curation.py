@@ -169,12 +169,93 @@ def build_queue(conn: sqlite3.Connection) -> list[ReviewItem]:
     return items
 
 
-def record_decision(conn: sqlite3.Connection, track_id: int, genre_id: int) -> None:
-    """Grava a decisao manual (``source='manual'``) e a torna a classificacao primaria."""
+def _current_proposal(
+    conn: sqlite3.Connection, track_id: int
+) -> tuple[int, str, str, float | None] | None:
+    """Classificacao vigente (sem a fonte manual) — o que o sistema propunha antes da correcao."""
+    genres = planner.genre_index(conn)
+    entries = [
+        (int(row["genre_id"]), str(row["confidence"]), str(row["source"]))
+        for row in conn.execute(
+            "SELECT genre_id, confidence, source FROM track_genres"
+            " WHERE track_id = ? AND source != ?",
+            (track_id, MANUAL_SOURCE),
+        )
+    ]
+    if not entries:
+        return None
+    genre_id, confidence, source = planner.primary_entry(entries, genres)
+    row = conn.execute(
+        "SELECT score FROM track_genres WHERE track_id = ? AND genre_id = ? AND source = ?",
+        (track_id, genre_id, source),
+    ).fetchone()
+    score = float(row["score"]) if row and row["score"] is not None else None
+    return genre_id, source, confidence, score
+
+
+def _embedding_provenance(conn: sqlite3.Connection, track_id: int) -> tuple[str | None, str | None]:
+    row = conn.execute(
+        "SELECT e.model AS model, e.model_version AS model_version"
+        " FROM embeddings e JOIN tracks t ON t.file_id = e.file_id"
+        " WHERE t.id = ? ORDER BY e.created_at DESC LIMIT 1",
+        (track_id,),
+    ).fetchone()
+    if row is None:
+        return None, None
+    return str(row["model"]), str(row["model_version"])
+
+
+def _record_feedback(
+    conn: sqlite3.Connection,
+    track_id: int,
+    corrected_genre_id: int,
+    proposal: tuple[int, str, str, float | None] | None,
+    *,
+    operator: str | None,
+) -> None:
+    """Registra o par proposta x correcao no 'banco de ML' local (schema v5, ADR-0022)."""
+    if proposal is None:
+        proposed_id: int | None = None
+        source: str | None = None
+        confidence: str | None = None
+        score: float | None = None
+    else:
+        proposed_id, source, confidence, score = proposal
+    model, model_version = _embedding_provenance(conn, track_id)
     conn.execute(
+        "INSERT INTO feedback(track_id, proposed_genre_id, corrected_genre_id, source,"
+        " confidence, score, model, model_version, operator, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            track_id,
+            proposed_id,
+            corrected_genre_id,
+            source,
+            confidence,
+            score,
+            model,
+            model_version,
+            operator,
+            utcnow(),
+        ),
+    )
+
+
+def record_decision(
+    conn: sqlite3.Connection, track_id: int, genre_id: int, *, operator: str | None = None
+) -> None:
+    """Grava a decisao manual (``source='manual'``) e realimenta o aprendizado.
+
+    A decisao passa a ser a classificacao primaria e, quando havia uma proposta previa,
+    o par **proposta x correcao** e registrado em ``feedback`` para a camada ``learned``.
+    """
+    proposal = _current_proposal(conn, track_id)
+    cursor = conn.execute(
         "INSERT INTO track_genres(track_id, genre_id, source, confidence, score, created_at)"
         " VALUES (?, ?, ?, ?, NULL, ?)"
         " ON CONFLICT(track_id, genre_id, source) DO NOTHING",
         (track_id, genre_id, MANUAL_SOURCE, MANUAL_CONFIDENCE, utcnow()),
     )
+    if cursor.rowcount:  # so registra quando a decisao e nova (idempotente)
+        _record_feedback(conn, track_id, genre_id, proposal, operator=operator)
     conn.commit()

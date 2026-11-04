@@ -168,6 +168,40 @@ def test_record_decision_is_idempotent(catalog, tmp_path) -> None:
     assert total == 1
 
 
+def test_record_decision_records_feedback(catalog, tmp_path) -> None:
+    track_id = add_track(
+        catalog,
+        tmp_path / "a.wav",
+        entries=(("house.deep_house", "tags", "A"), ("techno.minimal", "rules", "B")),
+    )
+
+    curation.record_decision(catalog, track_id, genre_id(catalog, "techno.minimal"))
+
+    row = catalog.execute(
+        "SELECT proposed_genre_id, corrected_genre_id, source, confidence"
+        " FROM feedback WHERE track_id = ?",
+        (track_id,),
+    ).fetchone()
+    # a proposta vigente vinha das tags (rank acima de rules)
+    assert row["proposed_genre_id"] == genre_id(catalog, "house.deep_house")
+    assert row["corrected_genre_id"] == genre_id(catalog, "techno.minimal")
+    assert row["source"] == "tags"
+    assert row["confidence"] == "A"
+
+
+def test_record_decision_feedback_is_idempotent(catalog, tmp_path) -> None:
+    track_id = add_track(catalog, tmp_path / "a.wav")
+    techno = genre_id(catalog, "techno.minimal")
+
+    curation.record_decision(catalog, track_id, techno)
+    curation.record_decision(catalog, track_id, techno)
+
+    total = catalog.execute(
+        "SELECT COUNT(*) FROM feedback WHERE track_id = ?", (track_id,)
+    ).fetchone()[0]
+    assert total == 1
+
+
 def test_genre_choices_uses_root_and_leaf_labels(catalog) -> None:
     labels = {choice.label for choice in curation.genre_choices(catalog)}
 

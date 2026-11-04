@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -213,3 +215,54 @@ def load_config(path: Path | str | None = None) -> Config:
             admin_token=license_data.get("admin_token"),
         ),
     )
+
+
+def _toml_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _roots_line(roots: Sequence[str]) -> str:
+    return "roots = [" + ", ".join(_toml_string(root) for root in roots) + "]"
+
+
+def update_library_roots(path: Path | str, roots: Sequence[str]) -> Path:
+    """Grava `library.roots` no arquivo de configuracao preservando o restante do conteudo.
+
+    A edicao e cirurgica (linha do bloco `[library]`): comentarios, chaves nao modeladas
+    e demais blocos permanecem intactos.
+    """
+    target = Path(path)
+    lines: list[str] = []
+    if target.exists():
+        lines = target.read_text(encoding="utf-8-sig").splitlines()
+
+    new_line = _roots_line(roots)
+    header = next((i for i, line in enumerate(lines) if line.strip() == "[library]"), None)
+
+    if header is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(["[library]", new_line])
+    else:
+        section_end = len(lines)
+        for i in range(header + 1, len(lines)):
+            if lines[i].lstrip().startswith("["):
+                section_end = i
+                break
+        roots_index = next(
+            (i for i in range(header + 1, section_end) if re.match(r"\s*roots\s*=", lines[i])),
+            None,
+        )
+        if roots_index is None:
+            lines.insert(header + 1, new_line)
+        else:
+            end = roots_index
+            balance = lines[roots_index].count("[") - lines[roots_index].count("]")
+            while balance > 0 and end + 1 < section_end:
+                end += 1
+                balance += lines[end].count("[") - lines[end].count("]")
+            lines[roots_index : end + 1] = [new_line]
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return target

@@ -57,6 +57,15 @@ from djlife.integrations.base import (
     resolve_move_mapping,
 )
 from djlife.ml.base import EmbeddingUnavailable
+from djlife.ml.learning import (
+    DEFAULT_HALF_LIFE_DAYS,
+    LearnPlan,
+    LearnResult,
+)
+from djlife.ml.learning import (
+    apply_plan as apply_learn_plan,
+)
+from djlife.ml.learning import build_plan as build_learn_plan
 from djlife.ml.neighbors import (
     NeighborPlan,
     NeighborResult,
@@ -934,6 +943,143 @@ def neighbors(
     _print_neighbor_result(result)
 
 
+def _print_learn_plan(plan: LearnPlan, preview: int) -> None:
+    summary = Table(title=f"Learn - {plan.model} ({plan.model_version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Embeddados", str(plan.embedded))
+    summary.add_row("Correcoes (ref)", str(plan.references))
+    summary.add_row("Alvos", str(plan.targets))
+    summary.add_row("Propostas", str(plan.pending))
+    console.print(summary)
+
+    if plan.references == 0:
+        console.print(
+            "[yellow]Sem correcoes com embedding (source=manual); rode `djlife review`"
+            " e depois `djlife embed`.[/yellow]"
+        )
+        return
+
+    if preview > 0 and plan.proposals:
+        shown = plan.proposals[:preview]
+        table = Table(title=f"Propostas ({len(shown)} de {plan.pending})")
+        table.add_column("Faixa", justify="right")
+        table.add_column("Genero")
+        table.add_column("Confianca")
+        table.add_column("Acordo", justify="right")
+        table.add_column("Vizinhos", justify="right")
+        for proposal in shown:
+            table.add_row(
+                str(proposal.track_id),
+                escape(proposal.genre),
+                proposal.confidence,
+                f"{proposal.score:.2f}",
+                str(len(proposal.votes)),
+            )
+        console.print(table)
+
+
+def _print_learn_explanation(plan: LearnPlan, track_id: int) -> None:
+    proposal = next((item for item in plan.proposals if item.track_id == track_id), None)
+    if proposal is None:
+        console.print(f"[yellow]Sem proposta learned para a faixa {track_id}.[/yellow]")
+        return
+    table = Table(title=f"Explicacao - faixa {track_id} -> {escape(proposal.genre)}")
+    table.add_column("Vizinho", justify="right")
+    table.add_column("Genero")
+    table.add_column("Similaridade", justify="right")
+    table.add_column("Peso", justify="right")
+    for vote in proposal.votes:
+        table.add_row(
+            str(vote.file_id),
+            escape(vote.genre),
+            f"{vote.similarity:.3f}",
+            f"{vote.weight:.3f}",
+        )
+    console.print(table)
+
+
+def _print_learn_result(result: LearnResult) -> None:
+    summary = Table(title="Learn")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Removidas (recalculo)", str(result.removed))
+    summary.add_row("Propostas gravadas", str(result.written))
+    console.print(summary)
+
+
+@app.command()
+def learn(
+    k: Annotated[
+        int | None, typer.Option("--k", help="Vizinhos por faixa (padrao: ml.neighbors).")
+    ] = None,
+    min_similarity: Annotated[
+        float | None,
+        typer.Option("--min-similarity", help="Similaridade minima (padrao: ml.min_similarity)."),
+    ] = None,
+    half_life: Annotated[
+        float | None,
+        typer.Option("--half-life", help="Meia-vida (dias) do decaimento por recencia."),
+    ] = None,
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", "-b", help="clap, mert ou muq (padrao: ml.backend)."),
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="ID do modelo (padrao: ml.model).")
+    ] = None,
+    explain: Annotated[
+        int | None,
+        typer.Option("--explain", help="Explica os vizinhos votantes de uma faixa (track_id)."),
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Grava as propostas em track_genres (source=learned)."),
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Maximo de faixas alvo.")
+    ] = None,
+    preview: Annotated[int, typer.Option("--preview", help="Propostas exibidas na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Aprende com as correcoes do usuario (camada learned) via k-NN sobre os embeddings."""
+    cfg, conn = _open_catalog(config)
+    name = backend or cfg.ml.backend
+    chosen_model = model or cfg.ml.model
+    try:
+        version = embedder_version(name, chosen_model)
+    except ValueError as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    plan = build_learn_plan(
+        conn,
+        name,
+        version,
+        k=k if k is not None else cfg.ml.neighbors,
+        min_similarity=min_similarity if min_similarity is not None else cfg.ml.min_similarity,
+        half_life_days=half_life if half_life is not None else DEFAULT_HALF_LIFE_DAYS,
+        limit=limit,
+    )
+    _print_learn_plan(plan, preview)
+    if explain is not None:
+        _print_learn_explanation(plan, explain)
+    if not apply:
+        conn.close()
+        return
+    if plan.pending == 0:
+        conn.close()
+        console.print("[yellow]Nenhuma proposta nova.[/yellow]")
+        return
+
+    result = apply_learn_plan(conn, plan)
+    conn.close()
+    _print_learn_result(result)
+
+
 def dedupe_cmd(
     apply: Annotated[
         bool, typer.Option("--apply", help="Executa a quarentena (move os redundantes).")
@@ -1804,7 +1950,9 @@ def ui(
         console.print(f"Catalogo: {cfg.db_path}")
         console.print("[dim]Ctrl+C para encerrar.[/dim]")
 
-    ui_server.serve(cfg, host=host, port=port, open_browser=not no_open, on_ready=announce)
+    ui_server.serve(
+        cfg, host=host, port=port, open_browser=not no_open, config_path=config, on_ready=announce
+    )
 
 
 if __name__ == "__main__":

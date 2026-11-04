@@ -5,7 +5,8 @@ SQLite** (fonte de verdade) e reorganiza o filesystem por gênero/subgênero **s
 bibliotecas Serato/Rekordbox — por padrão via **hardlink**, sem tocar nos originais.
 
 Pipeline de classificação em camadas: tags (L0) → regras + taxonomia (L1) → DSP BPM/tonalidade
-(L2) → embeddings CLAP + k-NN (L3) → foundation models MERT/MuQ (L4).
+(L2) → embeddings CLAP + k-NN (L3) → aprendizado pelas correções (`learned`, L3.5) → foundation
+models MERT/MuQ (L4).
 
 ---
 
@@ -70,6 +71,9 @@ djlife classify
 # 3. Revisa manualmente faixas cujo gênero diverge entre as fontes (tags/regras/embeddings)
 djlife review            # fila interativa; --list só lista, --limit N, --open abre no player
 
+# 3b. Aprende com as correções do `review` (camada `learned`, k-NN sobre embeddings)
+djlife learn             # dry-run; --apply grava `learned`; --explain N mostra os vizinhos
+
 # 4. Visão geral e buscas
 djlife stats
 djlife search "deadmau5"
@@ -114,11 +118,12 @@ djlife doctor
 ```
 
 Comandos que alteram arquivos ou bancos DJ são **dry-run por padrão** — `analyze`, `embed`,
-`neighbors`, `dedupe`, `export`, `import` e `relink` só executam com `--apply`. A organização do
-filesystem segue o fluxo `plan` (dry-run) → `apply` (executa, pede confirmação) → `undo`
-(reverte pelo journal). O `review` não é dry-run: grava a decisão do usuário no **catálogo**
-(`source=manual`, que passa a valer sobre as fontes automáticas) e não toca o filesystem. Lista
-completa: `djlife --help`.
+`neighbors`, `learn`, `dedupe`, `export`, `import` e `relink` só executam com `--apply`. A
+organização do filesystem segue o fluxo `plan` (dry-run) → `apply` (executa, pede confirmação) →
+`undo` (reverte pelo journal). O `review` não é dry-run: grava a decisão do usuário no **catálogo**
+(`source=manual`, que passa a valer sobre as fontes automáticas) e não toca o filesystem; o
+`learn` reprocessa essas correções em uma camada `learned` (acima de `embedding`), também sem
+tocar o filesystem. Lista completa: `djlife --help`.
 
 > As integrações com **Rekordbox/Serato estão em beta** — não há garantia de funcionamento. O
 > fluxo suportado e priorizado é a organização no **filesystem** (`plan`/`apply`).
@@ -148,6 +153,7 @@ pip install -e ".[ml]"          # CLAP/MERT; use ".[muq]" para o MuQ
 djlife embed                     # dry-run; --apply grava os vetores em `embeddings`
 djlife embed --backend mert      # ou --backend muq (requer o extra correspondente)
 djlife neighbors                 # dry-run; --apply propõe gênero para faixas sem rótulo
+djlife learn                     # dry-run; --apply aprende com as correções (`source=manual`)
 ```
 
 > O `essentia` não publica wheel para Windows e exige `python-ffmpeg`. No Windows use `librosa`

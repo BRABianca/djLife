@@ -13,13 +13,13 @@ import webbrowser
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 from djlife import __version__, admin, registry
 from djlife import license as license_mod
 from djlife.config import Config
-from djlife.ui import data
+from djlife.ui import data, setup
 
 ASSETS_DIR = Path(__file__).with_name("assets")
 CONTENT_TYPES = {
@@ -35,6 +35,7 @@ CONTENT_TYPES = {
 }
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 1000
+DEFAULT_CONFIG_PATH = Path("djlife.toml")
 
 
 def _limit(query: dict[str, list[str]], default: int = DEFAULT_LIMIT) -> int:
@@ -83,10 +84,46 @@ def resolve_asset(name: str) -> Path | None:
     return candidate
 
 
+class _Server(ThreadingHTTPServer):
+    """Servidor com configuracao mutavel (setup do primeiro acesso) e job de scan."""
+
+    cfg: Config
+    config_path: Path
+    scan_job: setup.ScanJob | None
+
+    def __init__(
+        self,
+        address: tuple[str, int],
+        handler: type[BaseHTTPRequestHandler],
+        *,
+        cfg: Config,
+        config_path: Path,
+    ) -> None:
+        super().__init__(address, handler)
+        self.cfg = cfg
+        self.config_path = config_path
+        self.scan_job = None
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "djlife-ui"
 
-    cfg: Config
+    cfg: Config = Config()
+
+    @property
+    def config(self) -> Config:
+        server = self.server
+        return server.cfg if isinstance(server, _Server) else self.cfg
+
+    @property
+    def config_path(self) -> Path:
+        server = self.server
+        return server.config_path if isinstance(server, _Server) else DEFAULT_CONFIG_PATH
+
+    @property
+    def scan_job(self) -> setup.ScanJob | None:
+        server = self.server
+        return server.scan_job if isinstance(server, _Server) else None
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -106,6 +143,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         route = parsed.path
+        if route.startswith("/api/setup/"):
+            self._post_setup(route[len("/api/setup/") :])
+            return
         if not route.startswith("/api/admin/"):
             self._send_json({"error": "rota nao encontrada"}, status=404)
             return
@@ -117,7 +157,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         token = self.headers.get("X-Admin-Token", "") or str(body.get("token", ""))
         try:
-            admin.require_token(self.cfg, token)
+            admin.require_token(self.config, token)
             payload = self._admin_action(endpoint, body)
         except admin.AdminUnavailable as exc:
             self._send_json({"error": str(exc)}, status=403)
@@ -130,8 +170,46 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send_json(payload)
 
+    def _same_origin(self) -> bool:
+        """Bloqueia POST cross-origin (CSRF) quando o navegador envia `Origin`."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = self.headers.get("Host", "")
+        return origin in {f"http://{host}", f"https://{host}"}
+
+    def _post_setup(self, endpoint: str) -> None:
+        if not self._same_origin():
+            self._send_json({"error": "origem nao permitida"}, status=403)
+            return
+        try:
+            body = self._read_json_body()
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        try:
+            if endpoint == "root":
+                path = str(body.get("path", "")).strip()
+                if not path:
+                    raise setup.SetupError("informe a pasta raiz")
+                cfg = setup.save_root(self.config_path, path)
+                cast(_Server, self.server).cfg = cfg
+                payload = setup.state(cfg, self.config_path)
+            elif endpoint == "scan":
+                server = cast(_Server, self.server)
+                if server.scan_job is None or server.scan_job.status != "running":
+                    server.scan_job = setup.start_scan(self.config)
+                payload = server.scan_job.snapshot()
+            else:
+                self._send_json({"error": f"endpoint desconhecido: {endpoint}"}, status=404)
+                return
+        except setup.SetupError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        self._send_json(payload)
+
     def _admin_action(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any] | None:
-        cfg = self.cfg
+        cfg = self.config
         passphrase = str(body["passphrase"]) if body.get("passphrase") else None
         if endpoint == "issue":
             return admin.issue(
@@ -206,10 +284,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_api(self, endpoint: str, query: dict[str, list[str]]) -> None:
-        cfg = self.cfg
+        cfg = self.config
         try:
             if endpoint == "overview":
                 payload = data.overview(cfg)
+            elif endpoint == "setup/status":
+                payload = setup.state(cfg, self.config_path)
+            elif endpoint == "setup/list":
+                payload = setup.list_directory(query.get("path", [""])[0])
+            elif endpoint == "setup/scan":
+                job = self.scan_job
+                payload = job.snapshot() if job is not None else {"status": "idle"}
             elif endpoint == "tracks":
                 term = query.get("q", [""])[0]
                 payload = {"tracks": data.tracks(cfg, term, limit=_limit(query))}
@@ -239,6 +324,9 @@ class _Handler(BaseHTTPRequestHandler):
         except data.CatalogUnavailable as exc:
             self._send_json({"error": str(exc)}, status=503)
             return
+        except setup.SetupError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
         except registry.RegistryError as exc:
             self._send_json({"error": str(exc)}, status=500)
             return
@@ -250,9 +338,15 @@ def build_handler(cfg: Config) -> type[_Handler]:
     return type("_BoundHandler", (_Handler,), {"cfg": cfg})
 
 
-def build_server(cfg: Config, *, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+def build_server(
+    cfg: Config,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    config_path: Path | str = DEFAULT_CONFIG_PATH,
+) -> _Server:
     """Instancia o servidor (sem iniciar o loop)."""
-    return ThreadingHTTPServer((host, port), build_handler(cfg))
+    return _Server((host, port), build_handler(cfg), cfg=cfg, config_path=Path(config_path))
 
 
 def serve(
@@ -261,10 +355,11 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
+    config_path: Path | str = DEFAULT_CONFIG_PATH,
     on_ready: Callable[[str], None] | None = None,
 ) -> None:
     """Sobe o servidor local e bloqueia ate KeyboardInterrupt."""
-    httpd = build_server(cfg, host=host, port=port)
+    httpd = build_server(cfg, host=host, port=port, config_path=config_path)
     bound_host = str(httpd.server_address[0])
     bound_port = int(httpd.server_address[1])
     url = f"http://{bound_host}:{bound_port}/"

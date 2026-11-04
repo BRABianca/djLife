@@ -316,8 +316,8 @@ def test_ui_command_starts_server(monkeypatch, tmp_path, make_wav) -> None:
     config = _scanned_library(tmp_path, make_wav)
     captured = {}
 
-    def fake_serve(cfg, *, host, port, open_browser, on_ready):
-        captured.update(host=host, port=port, open_browser=open_browser)
+    def fake_serve(cfg, *, host, port, open_browser, config_path, on_ready):
+        captured.update(host=host, port=port, open_browser=open_browser, config_path=config_path)
         on_ready("http://127.0.0.1:9090/")
 
     monkeypatch.setattr("djlife.cli.ui_server.serve", fake_serve)
@@ -325,7 +325,12 @@ def test_ui_command_starts_server(monkeypatch, tmp_path, make_wav) -> None:
     result = runner.invoke(app, ["ui", "--port", "9090", "--no-open", "--config", str(config)])
 
     assert result.exit_code == 0
-    assert captured == {"host": "127.0.0.1", "port": 9090, "open_browser": False}
+    assert captured == {
+        "host": "127.0.0.1",
+        "port": 9090,
+        "open_browser": False,
+        "config_path": config,
+    }
     assert "Interface djLife" in result.stdout
 
 

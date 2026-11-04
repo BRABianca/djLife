@@ -87,18 +87,19 @@ projeta no filesystem e grava journal.
 | **L1** | Regras locais + taxonomia (`genres.yaml`) | baixo | A/B | ok |
 | **L2** | DSP (BPM/key/energia) + classificador | médio | B | parcial (BPM/key via `librosa`) |
 | **L3** | Embeddings (CLAP) + k-NN | alto | B | parcial (CLAP + k-NN, `source=embedding`) |
+| **L3.5** | Correções do usuário (`feedback`) + k-NN | baixo | B | ok (`source=learned`, ADR-0022) |
 | **L4** | Foundation models (MERT/MuQ) | alto | B | parcial (`mert`/`muq` como embedders, ADR-0017) |
 
 Cada resultado grava `source` + `confidence` (`A`/`B`/`C`) em `track_genres`; nada é
 sobrescrito — camadas se acumulam e a decisão final é explícita.
 
 A **classificação primária** de uma faixa (a que `planner`/`export`/`report` usam) é escolhida
-por `SOURCE_ORDER = {manual: 0, tags: 1, rules: 2, embedding: 3}` e depois por confiança. Quando
-as fontes discordam, o conflito é isolado e resolvido por **curadoria humana** (`djlife review`,
-seção 5): a decisão do usuário entra como `source = 'manual'` e passa a vencer as automáticas,
-sem apagá-las (ADR-0019).
+por `SOURCE_ORDER = {manual: 0, tags: 1, rules: 2, learned: 3, embedding: 4}` e depois por
+confiança. Quando as fontes discordam, o conflito é isolado e resolvido por **curadoria humana**
+(`djlife review`, seção 5): a decisão do usuário entra como `source = 'manual'` e passa a vencer
+as automáticas, sem apagá-las (ADR-0019). As correções realimentam a camada `learned` (ADR-0022).
 
-## 3. Modelo de dados (schema v4)
+## 3. Modelo de dados (schema v5)
 
 | Tabela | Papel | Campos-chave |
 |---|---|---|
@@ -108,7 +109,7 @@ sem apagá-las (ADR-0019).
 | `tags` | tags cruas lidas do arquivo | `file_id`, `namespace`, `key`, `value` |
 | `audio_analysis` | análise versionada por analisador | `analyzer`, `analysis_version`, `bpm`, `key_camelot`, `key_open`, `energy`, `loudness_lufs` |
 | `genres` | árvore de gêneros | `slug` (único, ex. `house.deep_house`), `parent_id`, `level`, `is_active`, `replaced_by` |
-| `track_genres` | classificação N:N | `track_id`, `genre_id`, `source`, `confidence`, `score` |
+| `track_genres` | classificação N:N | `track_id`, `genre_id`, `source`, `confidence`, `score`, `model_version` |
 | `scan_runs` | histórico de varreduras | `root`, `status`, `files_seen/new/updated/missing`, `errors` |
 | `scan_errors` | erros por varredura (inclui falhas de fingerprint) | `run_id`, `path`, `message` |
 | `journal` | log reversível de `apply`/`dedupe` (base do `undo`) | `batch`, `op`, `strategy`, `src`, `dst`, `file_id`, `undone` |
@@ -117,9 +118,11 @@ sem apagá-las (ADR-0019).
 | `dup_members` | arquivos de cada grupo + keeper | `group_id`, `file_id`, `is_keeper` |
 | `file_versions` | versão rotulada da faixa | `file_id` (PK), `version`, `source`, `confidence` |
 | `embeddings` | vetor de áudio versionado por modelo (L3) | `file_id`, `model`, `model_version`, `dim`, `vector` (BLOB float32) |
+| `feedback` | correções humanas (proposta × correção) — banco de ML local (L3.5) | `track_id`, `proposed_genre_id`, `corrected_genre_id`, `source`, `confidence`, `score`, `model`, `model_version`, `operator` |
 
 DDL em [`src/djlife/schema.sql`](../src/djlife/schema.sql). Acesso em `db.py`
-(`connect`, `open_catalog`, `initialize`).
+(`connect`, `open_catalog`, `migrate`, `initialize`). O `migrate` aplica os passos incrementais
+(ex. v4 → v5) de forma idempotente.
 
 ## 4. Estratégia de arquivos
 
@@ -148,6 +151,7 @@ djlife review     → revisa faixas com gênero divergente entre fontes; grava d
 djlife analyze    → BPM + tonalidade (Camelot/Open Key) → `audio_analysis` (dry-run; `--apply`)
 djlife embed      → vetores de áudio (clap/mert/muq) → `embeddings` (dry-run; `--apply`)
 djlife neighbors  → k-NN propõe gênero p/ faixas sem rótulo → `track_genres` (dry-run; `--apply`)
+djlife learn      → aprende com as correções do usuário (camada `learned`, k-NN) → `track_genres`
 djlife duplicates → agrupa duplicatas (hash → fingerprint → ISRC/MBID) em `dup_groups`
 djlife dedupe     → move redundantes p/ quarentena (dry-run por padrão; `--apply`)
 djlife plan       → gera plano + diff do que seria criado/movido (dry-run)
@@ -277,9 +281,9 @@ djLife/
 ├── packaging/              # spec do PyInstaller (onedir)
 ├── docs/                   # concepcão, arquitetura, roadmap, decisões
 ├── src/djlife/
-│   ├── schema.sql          # DDL v4 (journal + fingerprints/dup/file_versions + embeddings)
+│   ├── schema.sql          # DDL v5 (journal + fingerprints/dup/file_versions + embeddings + feedback)
 │   ├── genres.yaml         # taxonomia padrão (versionada)
-│   ├── db.py               # conexão + PRAGMAs + initialize
+│   ├── db.py               # conexão + PRAGMAs + initialize/migrate
 │   ├── config.py           # load_config (tomllib)
 │   ├── scanner.py          # varredura incremental + hash
 │   ├── tags.py             # leitura/escrita de tags (DJLIFE_*)
