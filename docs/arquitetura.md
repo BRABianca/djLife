@@ -24,6 +24,10 @@
                  └────────────┘
                         │
                  ┌────────────┐
+                 │  curation  │──▶ conflitos entre fontes · decisão humana (source=manual)
+                 └────────────┘
+                        │
+                 ┌────────────┐
                  │  planner   │──▶ plano + diff (dry-run)
                  └────────────┘
                         │
@@ -72,6 +76,12 @@ projeta no filesystem e grava journal.
 Cada resultado grava `source` + `confidence` (`A`/`B`/`C`) em `track_genres`; nada é
 sobrescrito — camadas se acumulam e a decisão final é explícita.
 
+A **classificação primária** de uma faixa (a que `planner`/`export`/`report` usam) é escolhida
+por `SOURCE_ORDER = {manual: 0, tags: 1, rules: 2, embedding: 3}` e depois por confiança. Quando
+as fontes discordam, o conflito é isolado e resolvido por **curadoria humana** (`djlife review`,
+seção 5): a decisão do usuário entra como `source = 'manual'` e passa a vencer as automáticas,
+sem apagá-las (ADR-0019).
+
 ## 3. Modelo de dados (schema v4)
 
 | Tabela | Papel | Campos-chave |
@@ -118,6 +128,7 @@ maior duração → maior tamanho) permanece no lugar.
 djlife scan       → varre raízes, atualiza `files` (incremental por mtime+size)
 djlife classify   → resolve gênero em camadas (L0…), grava `track_genres`
 djlife versions   → rotula versão (Original/Extended/Radio/Remix/…) em `file_versions`
+djlife review     → revisa faixas com gênero divergente entre fontes; grava decisão `manual`
 djlife analyze    → BPM + tonalidade (Camelot/Open Key) → `audio_analysis` (dry-run; `--apply`)
 djlife embed      → vetores de áudio (clap/mert/muq) → `embeddings` (dry-run; `--apply`)
 djlife neighbors  → k-NN propõe gênero p/ faixas sem rótulo → `track_genres` (dry-run; `--apply`)
@@ -128,6 +139,8 @@ djlife apply      → executa o plano (hardlink/move + tags + journal)
 djlife undo       → reverte o último apply/dedupe pelo journal
 djlife status     → integridade dos bancos DJ (itens que resolvem p/ arquivos existentes)
 djlife relink     → reposiciona paths nos bancos DJ (dry-run por padrão; `--apply`)
+djlife export     → playlists M3U8 por gênero/subgênero a partir do catálogo (dry-run; `--apply`)
+djlife doctor     → auditoria somente-leitura do ambiente e do catálogo
 djlife ui         → sobe a interface web local (só leitura) em `127.0.0.1`
 djlife report     → exporta CSV/JSON + estatísticas
 ```
@@ -135,7 +148,10 @@ djlife report     → exporta CSV/JSON + estatísticas
 Convenções: Typer + Rich, barras de confiança A/B/C, respeito a `NO_COLOR`/`FORCE_COLOR`.
 `dedupe` e `apply` são **dry-run** por padrão; `--apply --yes` executa de fato.
 
-## 6. Integrações DJ
+## 6. Integrações DJ (beta)
+
+> **Beta:** a leitura e o relink dos bancos DJ não têm funcionamento garantido. O caminho
+> suportado e priorizado é a organização no **filesystem** (`plan`/`apply`, seções 4 e 5).
 
 | Software | Como armazena | Arquivo | Estratégia |
 |---|---|---|---|
@@ -221,15 +237,18 @@ djLife/
 │   ├── tags.py             # leitura/escrita de tags (DJLIFE_*)
 │   ├── taxonomy.py         # load_taxonomy + sync (genres/meta)
 │   ├── classifier.py       # L0 tags + L1 regras → track_genres
+│   ├── curation.py         # conflitos entre fontes + decisão humana (review)
 │   ├── versions.py         # rotulagem de versão → file_versions
 │   ├── dedupe.py           # 3 níveis de duplicatas → dup_groups/dup_members
 │   ├── quarantine.py       # move redundantes p/ quarentena (journal + undo)
 │   ├── planner.py          # template de caminho + diff (dry-run)
+│   ├── playlists.py        # playlists M3U8 por gênero/subgênero (export)
 │   ├── apply.py            # hardlink/move/tag_only + journal + undo
 │   ├── report.py           # CSV/JSON + estatísticas
+│   ├── doctor.py           # auditoria somente-leitura do ambiente/catálogo
 │   ├── analysis/           # backends de análise: base, camelot, librosa_backend, essentia_backend, runner
 │   ├── ml/                 # embeddings (L3/L4): base, vectors, clap/mert/muq_backend, runner, neighbors
-│   ├── integrations/       # Rekordbox/Serato: base, leitura + relink
+│   ├── integrations/       # Rekordbox/Serato: base, leitura + relink (beta)
 │   ├── ui/                 # interface web local: data.py, server.py, assets/
 │   └── cli.py              # Typer app
 └── tests/

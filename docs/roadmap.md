@@ -70,14 +70,17 @@ Varredura do filesystem e leitura de metadados.
 **Critério:** duplicatas agrupadas por 3 níveis, versões rotuladas e redundantes movidos
 para a quarentena de forma reversível (`undo`). ✔
 
-## Fase 7 — Integrações DJ ✅
+## Fase 7 — Integrações DJ (beta) ✅
+
+Protótipo de leitura/relink dos bancos DJ. **Marcado como beta**: não afirmamos funcionamento
+completo — o foco do produto é a organização no filesystem (Fases 5 e 13).
 
 - [x] Rekordbox: ler `master.db` (SQLCipher, extra `pyrekordbox`) e relink de paths
 - [x] Serato: ler `master.sqlite` (4.x, SQLite/WAL) e relink de paths
 - [x] verificação de integridade (`djlife status`) e relink dry-run por padrão (`djlife relink`)
 
 **Critério:** mover um arquivo no modo `move`, ver a referência quebrar em `status` e
-corrigi-la com `relink --apply` (com backup verificado), voltando a 0 ausentes. ✔
+corrigi-la com `relink --apply` (com backup verificado), voltando a 0 ausentes. ✔ (beta)
 
 ## Fase 8 — Interface de uso (cyberpunk) ✅
 
@@ -162,6 +165,48 @@ nem o k-NN.
 **Critério:** `embed --backend mert|muq` seleciona o backend e grava vetores com o
 `model_version` correto (ou falha cedo com `EmbeddingUnavailable` quando o extra falta);
 `pytest`/`ruff`/`mypy` verdes. ✔
+
+## Fase 13 — Operação no filesystem ✅
+
+Consolida o foco do produto — **organizar as pastas de música no filesystem** — com exportação
+de playlists, auditoria do ambiente e integração contínua (integrações DJ ficam como beta,
+ADR-0018).
+
+- [x] `playlists.py`: playlists **M3U8** por gênero/subgênero (`--by genre|subgenre`) a partir
+      do catálogo, com caminhos relativos à playlist (`planner.resolve_labels` reaproveita a
+      classificação primária)
+- [x] comando `djlife export` (`--out`, `--by`, `--apply`, `--preview`), dry-run por padrão
+- [x] `doctor.py` + `djlife doctor`: auditoria **somente leitura** (schema/PRAGMAs/`quick_check`
+      do SQLite, raízes, `files.target`, extras opcionais e binários externos)
+- [x] `.github/workflows/ci.yml`: matriz Python 3.11/3.12 × Linux/Windows com `ruff check`,
+      `ruff format --check`, `mypy` e `pytest`
+
+**Critério:** `djlife export --apply` grava playlists `.m3u8` conferíveis contra a pasta e o
+tocador; `djlife doctor` diagnostica o ambiente sem escrever nada; CI verde nos quatro jobs. ✔
+
+## Fase 14 — Curadoria humana ✅
+
+Nem sempre as fontes concordam: as tags (L0), as regras (L1) e os embeddings (L3) podem apontar
+para gêneros diferentes, e a decisão não é automatizável sem risco. Esta fase **separa as faixas
+com conflito entre fontes** e delega ao usuário a leitura manual da faixa para definir
+gênero/subgênero (ADR-0019).
+
+- [x] `curation.py`: reúne as classificações de `track_genres` e aponta os **conflitos entre
+      fontes** (`divergente` = raízes distintas; `ambígua` = mesma raiz, subgêneros distintos),
+      ordenando os mais graves primeiro
+- [x] comando `djlife review` (`--list`, `--limit`, `--open`, `--config`): fila interativa que
+      mostra os sinais por fonte + sugestão, permite **abrir a faixa no player** (`--open`),
+      pular, manter ou sair e gravar a decisão
+- [x] decisão manual gravada em `track_genres` com `source = 'manual'` (confiança `A`), que passa
+      a ser a **classificação primária** (`planner.SOURCE_ORDER` prioriza `manual`)
+- [x] `planner`: `SOURCE_ORDER` + `_primary` priorizando `manual`; helpers públicos
+      (`genre_index`, `root_and_leaf`) reaproveitados pela curadoria
+- [x] `tests/test_curation.py`: conflito entre fontes, ordem (divergente antes de ambígua),
+      exclusão de faixas já decididas, idempotência e precedência da decisão manual
+
+**Critério:** `djlife review --list` lista as faixas com conflito (por fonte e nível); `djlife
+review` grava a escolha do usuário como `source = 'manual'` e ela passa a valer em
+`plan`/`export`/`report`; `pytest`/`ruff`/`mypy` verdes. ✔
 
 ## Riscos abertos
 

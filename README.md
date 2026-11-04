@@ -67,27 +67,42 @@ djlife scan "D:\MinhaMusica"
 # 2. Resolve gênero em camadas (tags + regras) -> track_genres
 djlife classify
 
-# 3. Visão geral e buscas
+# 3. Revisa manualmente faixas cujo gênero diverge entre as fontes (tags/regras/embeddings)
+djlife review            # fila interativa; --list só lista, --limit N, --open abre no player
+
+# 4. Visão geral e buscas
 djlife stats
 djlife search "deadmau5"
 
-# 4. Organização: plano (dry-run) -> executa -> desfaz se quiser
+# 5. Organização: plano (dry-run) -> executa -> desfaz se quiser
 djlife plan
 djlife apply
 djlife undo
 
-# 5. Duplicatas e versões
+# 6. Playlists M3U8 por gênero/subgênero (dry-run; --apply grava)
+djlife export
+djlife export --apply
+
+# 7. Duplicatas e versões
 djlife duplicates
 djlife versions
 
-# 6. Interface web local (cyberpunk, somente leitura)
+# 8. Interface web local (cyberpunk, somente leitura)
 djlife ui
+
+# 9. Diagnóstico do ambiente e do catálogo (somente leitura)
+djlife doctor
 ```
 
 Comandos que alteram arquivos ou bancos DJ são **dry-run por padrão** — `analyze`, `embed`,
-`neighbors`, `dedupe` e `relink` só executam com `--apply`. A organização do filesystem segue o
-fluxo `plan` (dry-run) → `apply` (executa, pede confirmação) → `undo` (reverte pelo journal).
-Lista completa: `djlife --help`.
+`neighbors`, `dedupe`, `export` e `relink` só executam com `--apply`. A organização do filesystem
+segue o fluxo `plan` (dry-run) → `apply` (executa, pede confirmação) → `undo` (reverte pelo
+journal). O `review` não é dry-run: grava a decisão do usuário no **catálogo** (`source=manual`,
+que passa a valer sobre as fontes automáticas) e não toca o filesystem. Lista completa:
+`djlife --help`.
+
+> As integrações com **Rekordbox/Serato estão em beta** — não há garantia de funcionamento. O
+> fluxo suportado e priorizado é a organização no **filesystem** (`plan`/`apply`).
 
 ---
 
@@ -101,7 +116,7 @@ Instale apenas o que precisar (a instalação base já cobre o núcleo):
 | `ml` | Embeddings CLAP/MERT + k-NN (L3/L4) | `pip install -e ".[ml]"` |
 | `muq` | Embedder MuQ (L4, pesos CC-BY-NC) | `pip install -e ".[muq]"` |
 | `fingerprint` | Duplicatas por fingerprint acústico (Chromaprint) | `pip install -e ".[fingerprint]"` |
-| `rekordbox` | Ler/relink de `master.db` do Rekordbox 6/7 | `pip install -e ".[rekordbox]"` |
+| `rekordbox` | Ler/relink de `master.db` do Rekordbox 6/7 (beta) | `pip install -e ".[rekordbox]"` |
 | `essentia` | Backend alternativo de análise (Linux/WSL2; sem wheel no Windows) | `pip install -e ".[essentia]"` |
 | `packaging` | Gerar o executável com PyInstaller | `pip install -e ".[packaging]"` |
 | `dev` | Testes, lint e tipagem (pytest/ruff/mypy) | `pip install -e ".[dev]"` |

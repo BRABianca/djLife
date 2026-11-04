@@ -473,3 +473,79 @@ embedding** (768/1024 dims) e, portanto, o `model_version` gravado no catálogo.
 - (−) inferência de mais de um modelo sobre o mesmo catálogo custa tempo de CPU — o `--limit`
   do `embed` existe justamente para processar em lote.
 
+---
+
+## ADR-0018 — Integrações DJ em beta; foco no filesystem
+
+**Status:** aceita (2026-10-30)
+
+**Contexto**
+As integrações Rekordbox (ADR-0011) e Serato (ADR-0012) foram implementadas a partir de
+documentação e engenharia reversa, sem validação contra bancos reais em todos os cenários
+(versões, variantes de schema, cadeados de senha). Anunciá-las como funcionalidade estável
+criaria expectativa de suporte que não pode ser honrada. Ao mesmo tempo, o valor central do
+djLife é a **organização do filesystem**, que é auto-contida e verificável.
+
+**Decisão**
+
+1. **Rekordbox e Serato passam a ser rotulados `beta`** na CLI (`--help` e aviso em execução),
+   na UI (aba *integrações*) e na documentação. Não afirmamos funcionamento completo.
+2. **O foco de evolução é a organização no filesystem** (`plan` → `apply` → `undo`), com
+   ferramentas de apoio: `djlife export` (playlists M3U8 por gênero/subgênero) e `djlife doctor`
+   (auditoria do ambiente e da organização do catálogo).
+3. **Nada dos módulos de integração é removido**: `status`/`relink` continuam disponíveis e
+   cobertos por testes, apenas reclassificados como experimentais.
+4. **Garantias de segurança permanecem**: `relink` segue exigindo backup verificado e dry-run
+   por padrão, independentemente do status beta.
+
+**Consequências**
+- (+) expectativa alinhada: o usuário sabe que integrações podem falhar e que o caminho estável é
+  o filesystem;
+- (+) esforço concentrado onde o retorno é verificável (plan/apply/export/doctor);
+- (−) quem depende de relink automático não tem garantia de suporte — mitigado por `doctor`, que
+  diagnostica o ambiente (extras, `ffmpeg`, WAL/FK, raízes) antes de tentar;
+- (−) a promoção de beta para estável exigirá validação com bancos reais — fica como pendência
+  futura, não bloqueante.
+
+---
+
+## ADR-0019 — Curadoria humana: decisão `manual` tem precedência
+
+**Status:** aceita (2026-10-30)
+
+**Contexto**
+As camadas automáticas gravam gênero em `track_genres` com proveniência distinta (`tags` L0,
+`rules` L1, `embedding` L3/L4). Em parte da biblioteca as fontes **discordam**: uma tag antiga
+aponta para um gênero que não corresponde ao áudio, uma regra de regex acerta o artista mas
+erra o estilo, ou o k-NN aproxima faixas limítrofes. Escolher automaticamente entre fontes
+conflitantes erra em casos que só a **escuta humana** resolve — e, como o `apply` projeta o
+filesystem a partir do gênero, um erro de classificação vira um arquivo na pasta errada.
+
+**Decisão**
+
+1. **Detectar e separar os conflitos.** A fonte de conflito é a **divergência entre fontes**
+   (não entre rótulos de uma mesma fonte). O nível é `divergente` quando as raízes de gênero
+   diferem e `ambígua` quando compartilham a raiz mas divergem no subgênero; faixas `divergente`
+   vêm primeiro na fila.
+2. **Revisão humana via CLI interativa** (`djlife review`), sem dependência nova (só stdlib +
+   Rich). O prompt mostra os sinais por fonte + uma sugestão, permite **abrir a faixa no player
+   do sistema** (`--open`), além de escolher, pular, manter o rótulo atual ou sair.
+3. **A decisão do usuário vence.** A escolha é gravada em `track_genres` com
+   `source = 'manual'` (confiança `A`). O `planner` passa a ordenar as fontes por
+   `SOURCE_ORDER = {manual: 0, tags: 1, rules: 2, embedding: 3}`, então a decisão manual é a
+   **classificação primária** em `plan`/`export`/`report` — sem apagar as demais linhas
+   (auditáveis).
+4. **Idempotência e não-destrutividade.** Regravar a mesma decisão é `ON CONFLICT DO NOTHING`;
+   faixas já revisadas (`source = 'manual'`) saem da fila. A curadoria **não** toca o filesystem.
+
+**Consequências**
+- (+) a informação incoerente é isolada e resolvida com o julgamento que falta às fontes
+  automáticas, evitando arquivos em pastas erradas;
+- (+) precedência explícita e reversível: a decisão manual é uma linha a mais, distinta das
+  automáticas, sem removê-las;
+- (+) nada de dependência nova no núcleo (stdlib + Rich), mantendo o empacotamento enxuto;
+- (−) exige trabalho humano proporcional ao volume de conflitos — mitigado pela fila ordenada
+  (mais graves primeiro), pelo `--limit` e por `--list`, que permitem revisar em lotes;
+- (−) `SOURCE_ORDER` passa a ser parte do contrato de classificação: novas fontes precisam se
+  posicionar nele.
+
