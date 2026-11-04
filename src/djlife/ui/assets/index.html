@@ -3,18 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DJLIFE // console</title>
+  <title>DJLIFE // Tech-Noir Desk</title>
+  <link rel="icon" type="image/png" href="/assets/app-icon.png" />
+  <link rel="apple-touch-icon" href="/assets/app-icon.png" />
   <link rel="stylesheet" href="/assets/app.css" />
 </head>
 <body>
   <div class="bg-grid" aria-hidden="true"></div>
-  <div class="scanlines" aria-hidden="true"></div>
 
   <header class="topbar">
     <div class="brand">
-      <span class="glyph">&gt;_</span>
-      <h1 class="glitch" data-text="DJLIFE">DJLIFE</h1>
-      <span class="tag">catalog console</span>
+      <div class="brand-mark-frame">
+        <img class="brand-mark" src="/assets/app-icon.png" alt="DJLIFE" />
+      </div>
+      <div class="brand-copy">
+        <span class="eyebrow">Private Music Intelligence</span>
+        <h1>DJLIFE</h1>
+        <span class="tag">Noir Catalog Suite</span>
+      </div>
     </div>
     <div class="meta">
       <span class="chip" id="meta-app">v--</span>
@@ -30,6 +36,7 @@
     <button class="tab" data-view="duplicates">duplicatas</button>
     <button class="tab" data-view="versions">versoes</button>
     <button class="tab" data-view="integrations">integracoes</button>
+    <button class="tab" data-view="premium">premium</button>
     <button class="tab" data-view="manual">manual</button>
   </nav>
 
@@ -123,6 +130,23 @@
       </div>
       <div class="banner beta" id="integrations-notice" role="note"></div>
       <div class="grid cards" id="integrations-cards"></div>
+    </section>
+
+    <section class="view" id="view-premium">
+      <div class="view-head">
+        <h2>premium</h2>
+        <p>Oferta comercial planejada para recursos pagos, com venda interpessoal mensal ou vitalicia.</p>
+      </div>
+      <div class="banner beta" id="premium-notice" role="note"></div>
+      <div class="grid cards" id="premium-plans"></div>
+      <div class="panel">
+        <h3>recursos premium</h3>
+        <div class="stack" id="premium-features"></div>
+      </div>
+      <div class="panel">
+        <h3>instalacao</h3>
+        <div class="safe" id="premium-install"></div>
+      </div>
     </section>
 
     <section class="view" id="view-manual">

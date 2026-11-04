@@ -13,6 +13,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from djlife import db
+from djlife import license as license_mod
 from djlife.config import Config
 
 OK = "ok"
@@ -28,6 +29,7 @@ MODULES: tuple[tuple[str, str], ...] = (
     ("essentia", "essentia"),
     ("fingerprint", "pyacoustid"),
     ("rekordbox", "pyrekordbox"),
+    ("premium", "yt_dlp"),
 )
 
 # Binarios externos usados por extras especificos.
@@ -152,6 +154,38 @@ def _check_extras() -> list[Check]:
     return checks
 
 
+def _check_license(cfg: Config) -> list[Check]:
+    checks: list[Check] = []
+    public_key = cfg.license.public_key_path
+    license_file = cfg.license.license_path
+    checks.append(
+        Check(
+            "license public_key",
+            OK if public_key.exists() else WARN,
+            str(public_key) if public_key.exists() else f"ausente: {public_key}",
+        )
+    )
+    checks.append(
+        Check(
+            "license file",
+            OK if license_file.exists() else WARN,
+            str(license_file) if license_file.exists() else f"ausente: {license_file}",
+        )
+    )
+    status = license_mod.status_from_paths(
+        license_path=license_file,
+        public_key_path=public_key,
+    )
+    checks.append(
+        Check(
+            "license status",
+            OK if status.valid else WARN,
+            status.reason,
+        )
+    )
+    return checks
+
+
 def run(cfg: Config) -> list[Check]:
     """Executa todas as verificacoes e devolve a lista consolidada."""
-    return [*_check_catalog(cfg), *_check_library(cfg), *_check_extras()]
+    return [*_check_catalog(cfg), *_check_library(cfg), *_check_extras(), *_check_license(cfg)]

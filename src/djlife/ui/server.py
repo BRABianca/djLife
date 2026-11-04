@@ -1,4 +1,4 @@
-"""Servidor HTTP local (stdlib) que serve a interface cyberpunk do djLife.
+"""Servidor HTTP local (stdlib) que serve a interface Tech-Noir do djLife.
 
 Serve os assets embutidos em `ui/assets` e expoe endpoints JSON em `/api/*`.
 Somente leitura: nunca escreve no catalogo nem no filesystem.
@@ -24,6 +24,10 @@ CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
     ".svg": "image/svg+xml",
     ".json": "application/json; charset=utf-8",
 }
@@ -106,7 +110,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif endpoint == "integrations":
                 payload = data.integrations(cfg)
             elif endpoint == "capabilities":
-                payload = data.capabilities()
+                payload = data.capabilities(cfg)
             elif endpoint == "version":
                 payload = {"name": "djlife", "version": __version__}
             else:

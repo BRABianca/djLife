@@ -259,6 +259,51 @@ async function loadIntegrations() {
     .join("");
 }
 
+async function loadPremium() {
+  const data = await api("/api/capabilities");
+  const premium = data.premium;
+  const license = premium.license || {};
+
+  const notice = $("#premium-notice");
+  notice.textContent = premium.notice || "Camada premium preparada no app.";
+  notice.classList.remove("hidden");
+
+  $("#premium-plans").innerHTML = premium.plans
+    .map(
+      (plan) => `<div class="card">
+        <span class="label">${esc(plan.name)}</span>
+        <span class="value small">${esc(plan.billing)}</span>
+        <div class="hint">${esc(plan.detail)}</div>
+        <div class="hint"><span class="badge">${esc(plan.cta)}</span></div>
+      </div>`
+    )
+    .join("");
+
+  $("#premium-features").innerHTML = premium.features
+    .map(
+      (feature) => `<div class="safe-item">
+        <div class="safe-title">${esc(feature.name)} <span class="badge warn">${esc(feature.status)}</span></div>
+        <div class="safe-detail">${esc(feature.detail)} Planos: ${esc(feature.included_in.join(", "))}.</div>
+      </div>`
+    )
+    .join("");
+
+  $("#premium-install").innerHTML = `
+    <div class="safe-item">
+      <div class="safe-title">Extra opcional yt-dlp</div>
+      <div class="safe-detail">Instalacao: <code>${esc(premium.install)}</code></div>
+    </div>
+    <div class="safe-item">
+      <div class="safe-title">Liberacao comercial</div>
+      <div class="safe-detail">Estado atual: ${esc(premium.checkout)}. O app ja expoe os planos e a ativacao pode ser feita manualmente, sem intermediario.</div>
+    </div>
+    <div class="safe-item">
+      <div class="safe-title">Licenca offline</div>
+      <div class="safe-detail">Valida: ${license.valid ? "sim" : "nao"} · motivo: ${esc(license.reason || "-")} · plano: ${esc(license.plan || "-")} · cliente: ${esc(license.customer_id || "-")}</div>
+    </div>
+  `;
+}
+
 async function loadManual() {
   const data = await api("/api/capabilities");
 
@@ -304,6 +349,7 @@ const loaders = {
   duplicates: loadDuplicates,
   versions: loadVersions,
   integrations: loadIntegrations,
+  premium: loadPremium,
   manual: loadManual,
 };
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -19,8 +20,10 @@ from djlife import (
     db,
     dedupe,
     doctor,
+    importer,
     planner,
     playlists,
+    premium,
     quarantine,
     report,
     scanner,
@@ -30,6 +33,7 @@ from djlife import (
 )
 from djlife import apply as apply_mod
 from djlife import config as config_mod
+from djlife import license as license_mod
 from djlife.analysis.base import AnalysisUnavailable
 from djlife.analysis.runner import (
     AnalyzePlan,
@@ -70,6 +74,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+license_app = typer.Typer(help="Licenciamento premium offline.")
 console = Console()
 
 
@@ -93,6 +98,9 @@ def main(
     ] = False,
 ) -> None:
     """djLife - catalogo e organizacao de biblioteca musical para DJs."""
+
+
+app.add_typer(license_app, name="license")
 
 
 @app.command()
@@ -1391,6 +1399,238 @@ def review(
         conn.close()
 
 
+def _license_status_table(status: license_mod.LicenseStatus) -> Table:
+    table = Table(title="Licenca", box=None)
+    table.add_column("Campo")
+    table.add_column("Valor")
+    table.add_row("Valida", "sim" if status.valid else "nao")
+    table.add_row("Motivo", status.reason)
+    table.add_row("Cliente", status.customer_id or "-")
+    table.add_row("Plano", status.plan or "-")
+    table.add_row("Expira em", status.expires_at or "-")
+    table.add_row("Chave", status.key_id or "-")
+    table.add_row(
+        "Hash da maquina",
+        "ok" if status.machine_match is True else ("nao" if status.machine_match is False else "-"),
+    )
+    table.add_row("Recursos", ", ".join(status.features) if status.features else "-")
+    return table
+
+
+def _parse_expiration(days: int | None, expires: str | None) -> datetime | None:
+    if days is not None and expires is not None:
+        raise typer.BadParameter("Use apenas um entre --days e --expires.")
+    if expires is not None:
+        try:
+            parsed = datetime.fromisoformat(expires)
+        except ValueError as exc:
+            raise typer.BadParameter("Use YYYY-MM-DD em --expires.") from exc
+        return parsed.replace(tzinfo=UTC)
+    if days is not None:
+        return license_mod.utcnow() + timedelta(days=days)
+    return None
+
+
+@license_app.command("machine-id")
+def license_machine_id_cmd() -> None:
+    """Mostra o hash da maquina usado para vincular a licenca."""
+    data = license_mod.machine_summary()
+    table = Table(title="Machine ID", box=None)
+    table.add_column("Campo")
+    table.add_column("Valor")
+    for key in ("system", "machine", "node", "hash"):
+        table.add_row(key, data[key])
+    console.print(table)
+
+
+@license_app.command("generate-keypair")
+def license_generate_keypair_cmd(
+    private_key: Annotated[
+        Path, typer.Option("--private-key", help="Destino da chave privada PEM.")
+    ] = Path("secrets/license_private_key.pem"),
+    public_key: Annotated[
+        Path, typer.Option("--public-key", help="Destino da chave publica PEM.")
+    ] = Path("secrets/license_public_key.pem"),
+) -> None:
+    """Gera um par de chaves Ed25519 para emissao e validacao offline."""
+    private_out, public_out = license_mod.generate_keypair(private_key, public_key)
+    console.print(f"Chave privada: {private_out}")
+    console.print(f"Chave publica: {public_out}")
+
+
+@license_app.command("issue")
+def license_issue_cmd(
+    customer_id: Annotated[str, typer.Option("--customer-id", help="Identificador do cliente.")],
+    plan: Annotated[str, typer.Option("--plan", help="Plano da licenca (monthly/lifetime).")],
+    private_key: Annotated[
+        Path, typer.Option("--private-key", help="Chave privada PEM usada para assinar.")
+    ] = Path("secrets/license_private_key.pem"),
+    output: Annotated[
+        Path, typer.Option("--out", help="Arquivo .json da licenca assinada.")
+    ] = Path("dist/license.json"),
+    feature: Annotated[
+        list[str] | None, typer.Option("--feature", help="Recurso liberado; repita a opcao.")
+    ] = None,
+    issuer: Annotated[
+        str | None, typer.Option("--issuer", help="Nome/responsavel pela emissao.")
+    ] = None,
+    days: Annotated[
+        int | None, typer.Option("--days", help="Validade em dias a partir de agora.")
+    ] = None,
+    expires: Annotated[
+        str | None, typer.Option("--expires", help="Data de expiracao YYYY-MM-DD.")
+    ] = None,
+    machine_hash: Annotated[
+        str | None, typer.Option("--machine-hash", help="Hash de maquina do cliente.")
+    ] = None,
+    bind_current_machine: Annotated[
+        bool, typer.Option("--bind-current-machine", help="Vincula a licenca a esta maquina.")
+    ] = False,
+) -> None:
+    """Emite uma licenca offline assinada por Ed25519."""
+    features = tuple(feature or premium.feature_codes())
+    bound_machine = license_mod.machine_hash() if bind_current_machine else machine_hash
+    envelope = license_mod.issue_license(
+        private_key,
+        output,
+        customer_id=customer_id,
+        plan=plan,
+        features=features,
+        machine_hash_value=bound_machine,
+        expires_at=_parse_expiration(days, expires),
+        issuer=issuer,
+    )
+    console.print(f"Licenca emitida: {output}")
+    console.print(f"Key ID: {envelope.key_id}")
+    console.print(f"Recursos: {', '.join(envelope.claims.features)}")
+
+
+@license_app.command("status")
+def license_status_cmd(
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Mostra o status da licenca offline carregada no produto."""
+    cfg = config_mod.load_config(config)
+    status = license_mod.status_from_paths(
+        license_path=cfg.license.license_path,
+        public_key_path=cfg.license.public_key_path,
+    )
+    console.print(_license_status_table(status))
+    console.print(f"Arquivo da licenca: {cfg.license.license_path}")
+    console.print(f"Chave publica: {cfg.license.public_key_path}")
+    if not status.valid:
+        raise typer.Exit(code=1)
+
+
+def premium_cmd(
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Mostra os planos premium planejados e o extra opcional yt-dlp."""
+    cfg = config_mod.load_config(config)
+    payload = premium.as_payload(cfg)
+
+    plans = Table(title="Premium", box=None)
+    plans.add_column("Plano")
+    plans.add_column("Modelo")
+    plans.add_column("CTA")
+    plans.add_column("Detalhe")
+    for plan in premium.PLANS:
+        plans.add_row(plan.name, plan.billing, plan.cta, plan.detail)
+    console.print(plans)
+
+    features = Table(title="Recursos Premium", box=None)
+    features.add_column("Recurso")
+    features.add_column("Planos")
+    features.add_column("Estado")
+    features.add_column("Detalhe")
+    for feature in premium.FEATURES:
+        features.add_row(
+            feature.name,
+            ", ".join(feature.included_in),
+            feature.status,
+            feature.detail,
+        )
+    console.print(features)
+    console.print(_license_status_table(premium.license_status(cfg)))
+
+    console.print(f"[dim]{payload['notice']}[/dim]")
+    console.print(f"Extra opcional: [bold]{escape(str(payload['install']))}[/bold]")
+
+
+app.command(name="premium")(premium_cmd)
+
+
+def _print_import_candidates(candidates: list[importer.ImportCandidate]) -> None:
+    table = Table(title="Import (dry-run)", box=None)
+    table.add_column("URL")
+    table.add_column("Titulo")
+    table.add_column("Canal")
+    table.add_column("Duracao", justify="right")
+    for candidate in candidates:
+        duration = _fmt_duration(candidate.duration) if candidate.duration is not None else "-"
+        table.add_row(candidate.url, candidate.title, candidate.uploader or "-", duration)
+    console.print(table)
+
+
+def _print_import_outcomes(outcomes: list[importer.DownloadOutcome], out: Path) -> None:
+    table = Table(title="Import", box=None)
+    table.add_column("URL")
+    table.add_column("Arquivo")
+    table.add_column("Status")
+    for outcome in outcomes:
+        status = "ok" if outcome.ok else f"erro: {outcome.message}"
+        table.add_row(outcome.url, str(outcome.path) if outcome.path else "-", status)
+    console.print(table)
+    if any(outcome.ok for outcome in outcomes):
+        console.print(f"Rode [bold]djlife scan {out}[/bold] para ingerir no catalogo.")
+
+
+def import_cmd(
+    urls: Annotated[
+        list[str],
+        typer.Argument(help="URLs suportadas pelo yt-dlp (recurso premium)."),
+    ],
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Diretorio de destino dos downloads.")
+    ] = Path("downloads"),
+    audio_format: Annotated[
+        str, typer.Option("--format", help="Seletor de formato do yt-dlp.")
+    ] = importer.DEFAULT_FORMAT,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Baixa de fato; sem isso apenas inspeciona.")
+    ] = False,
+) -> None:
+    """Importa audio online com yt-dlp (recurso premium)."""
+    cfg = config_mod.load_config(config)
+    try:
+        premium.require_feature(cfg, premium.YTDLP_IMPORT_FEATURE)
+    except premium.PremiumUnavailable as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    try:
+        if apply:
+            outcomes = importer.download(urls, target_dir=out, audio_format=audio_format)
+            _print_import_outcomes(outcomes, out)
+        else:
+            candidates = importer.probe(urls)
+            _print_import_candidates(candidates)
+            console.print("[dim]Dry-run: use --apply para baixar.[/dim]")
+    except (importer.ImportUnavailable, importer.ImportFailed) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
+
+
+app.command(name="import")(import_cmd)
+
+
 @app.command()
 def ui(
     port: Annotated[
@@ -1404,7 +1644,7 @@ def ui(
         "djlife.toml"
     ),
 ) -> None:
-    """Sobe a interface web local (cyberpunk) para explorar o catalogo."""
+    """Sobe a interface web local (Tech-Noir) para explorar o catalogo."""
     cfg = config_mod.load_config(config)
 
     def announce(url: str) -> None:

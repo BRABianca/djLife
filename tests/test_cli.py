@@ -37,6 +37,8 @@ def test_help_flag() -> None:
     assert "neighbors" in result.stdout
     assert "doctor" in result.stdout
     assert "export" in result.stdout
+    assert "premium" in result.stdout
+    assert "import" in result.stdout
 
 
 def test_scan_command(tmp_path, make_wav) -> None:
@@ -325,6 +327,75 @@ def test_ui_command_starts_server(monkeypatch, tmp_path, make_wav) -> None:
     assert result.exit_code == 0
     assert captured == {"host": "127.0.0.1", "port": 9090, "open_browser": False}
     assert "Interface djLife" in result.stdout
+
+
+def test_premium_command() -> None:
+    result = runner.invoke(app, ["premium"])
+
+    assert result.exit_code == 0
+    assert "Premium mensal" in result.stdout
+    assert "Premium vitalicio" in result.stdout
+    assert "yt-dlp" in result.stdout
+    assert "Licenca" in result.stdout
+
+
+def test_license_machine_id_command() -> None:
+    result = runner.invoke(app, ["license", "machine-id"])
+
+    assert result.exit_code == 0
+    assert "Machine ID" in result.stdout
+    assert "hash" in result.stdout
+
+
+def test_license_generate_issue_and_status_commands(tmp_path) -> None:
+    private_key = tmp_path / "private.pem"
+    public_key = tmp_path / "public.pem"
+    license_file = tmp_path / "license.json"
+    config = tmp_path / "djlife.toml"
+    config.write_text(
+        f'[license]\npublic_key = "{public_key.as_posix()}"\n'
+        f'license_file = "{license_file.as_posix()}"\n',
+        encoding="utf-8",
+    )
+
+    generated = runner.invoke(
+        app,
+        [
+            "license",
+            "generate-keypair",
+            "--private-key",
+            str(private_key),
+            "--public-key",
+            str(public_key),
+        ],
+    )
+    assert generated.exit_code == 0
+    assert private_key.exists()
+    assert public_key.exists()
+
+    issued = runner.invoke(
+        app,
+        [
+            "license",
+            "issue",
+            "--customer-id",
+            "cliente-cli",
+            "--plan",
+            "lifetime",
+            "--private-key",
+            str(private_key),
+            "--out",
+            str(license_file),
+            "--bind-current-machine",
+        ],
+    )
+    assert issued.exit_code == 0
+    assert license_file.exists()
+
+    status = runner.invoke(app, ["license", "status", "--config", str(config)])
+    assert status.exit_code == 0
+    assert "cliente-cli" in status.stdout
+    assert "sim" in status.stdout
 
 
 def test_analyze_invalid_backend(tmp_path, make_wav) -> None:

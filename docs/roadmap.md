@@ -82,7 +82,7 @@ completo — o foco do produto é a organização no filesystem (Fases 5 e 13).
 **Critério:** mover um arquivo no modo `move`, ver a referência quebrar em `status` e
 corrigi-la com `relink --apply` (com backup verificado), voltando a 0 ausentes. ✔ (beta)
 
-## Fase 8 — Interface de uso (cyberpunk) ✅
+## Fase 8 — Interface de uso ✅
 
 Interface web local para explorar o catálogo e entender as funcionalidades sem decorar a CLI.
 
@@ -94,6 +94,10 @@ Interface web local para explorar o catálogo e entender as funcionalidades sem 
 
 **Critério:** `djlife ui` abre a página, mostra as métricas reais do catálogo e responde os
 endpoints JSON; assets e API validados via HTTP. ✔
+
+> **Nota (2026-11-04, pós-Fase 14):** o visual *cyberpunk* original foi substituído pela
+> identidade **Tech-Noir / luxo sombrio** (ADR-0013, nota de revisão). As decisões de fundo da
+> fase — HTTP da stdlib, sem build de frontend, somente leitura — permanecem intactas.
 
 ## Fase 9 — Análise de áudio ✅
 
@@ -207,6 +211,32 @@ gênero/subgênero (ADR-0019).
 **Critério:** `djlife review --list` lista as faixas com conflito (por fonte e nível); `djlife
 review` grava a escolha do usuário como `source = 'manual'` e ela passa a valer em
 `plan`/`export`/`report`; `pytest`/`ruff`/`mypy` verdes. ✔
+
+## Fase 15 — Premium e licenciamento offline ✅
+
+Camada paga (planos **mensal**/**vitalício**) liberada por venda **interpessoal**, com licença
+local assinada e verificação **offline** (ADR-0020). A chave privada fica fora do produto; o app
+embute apenas a chave pública.
+
+- [x] `premium.py`: catálogo de planos e recursos (yt-dlp, curadoria assistida, crates) +
+      `require_feature` como **gate** (licença válida *e* recurso presente em `features`)
+- [x] `license.py`: assinatura **Ed25519**, claims canônicos, `machine_hash()`, expiração e
+      `LicenseStatus`/`status_payload`
+- [x] comandos `djlife license machine-id | generate-keypair | issue | status`
+- [x] `importer.py` + comando `djlife import` (`yt-dlp`, import tardio): **primeiro recurso
+      premium de fato** — consome `require_feature` (`premium.ytdlp_import`) e separa os vídeos
+      baixados por item (falhas não interrompem o lote); dry-run por padrão
+- [x] extra `premium` (`yt-dlp`) em `pyproject.toml` e `cryptography` no núcleo
+- [x] config `[license]` (`public_key`, `license_file`) + auditoria no `doctor` e estado na UI
+      (aba *premium*)
+- [x] `tests/test_license.py`/`tests/test_import.py` + testes de CLI/UI cobrindo emissão,
+      expiração, machine binding, gate de recurso e o bloqueio do `import` sem licença
+- [x] rebranding visual para **Tech-Noir / luxo sombrio** (ADR-0013, nota de revisão)
+
+**Critério:** `djlife license issue` gera uma licença que `djlife license status` valida offline;
+licença expirada/assinada por outra chave/vinculada a outra máquina é rejeitada; `djlife import`
+é **bloqueado** sem licença válida e, com licença, faz dry-run dos metadados e baixa com `--apply`;
+`pytest` (234 passed)/`ruff`/`mypy` verdes. ✔
 
 ## Riscos abertos
 

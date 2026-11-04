@@ -309,6 +309,13 @@ sem novas dependências:
 - (−) resolver o asset é feito em disco (`ui/assets`), o que exige o pacote instalado com os
   arquivos não-Python (garantido pelo wheel do hatchling).
 
+> **Nota (2026-11-04, pós-Fase 14):** o visual *cyberpunk* (dark/neon, grade, scanlines, glitch)
+> foi substituído pela identidade **Tech-Noir / luxo sombrio** (grafite, metal, dourado
+> queimado) em `ui/assets/app.css`/`index.html`, com o ícone do app derivado de
+> `ui/assets/branding/logo-source-original.jpg`. As decisões de fundo desta ADR — HTTP da
+> stdlib, sem build de frontend, somente leitura — permanecem intactas; mudou apenas a camada
+> visual (variáveis `--cyan`/`--magenta`/`--lime` mantidas como aliases por compatibilidade).
+
 ---
 
 ## ADR-0014 — Análise de áudio com backend plugável: `librosa` + `essentia`
@@ -548,4 +555,53 @@ filesystem a partir do gênero, um erro de classificação vira um arquivo na pa
   (mais graves primeiro), pelo `--limit` e por `--list`, que permitem revisar em lotes;
 - (−) `SOURCE_ORDER` passa a ser parte do contrato de classificação: novas fontes precisam se
   posicionar nele.
+
+---
+
+## ADR-0020 — Licenciamento offline do premium com Ed25519
+
+**Status:** aceita (2026-11-04)
+
+**Contexto**
+O djLife **não é open source** e a camada premium (planos mensal/vitalício) é liberada por venda
+**interpessoal**, sem gateway de pagamento embutido. Uma checagem ingênua de flag no bytecode é
+trivialmente contornável (basta um `patch`), e a validação **não pode depender de rede** — o
+produto é *offline-first* e punir o cliente legítimo sem conexão seria pior que o risco de cópia.
+
+**Decisão**
+
+1. **Assinatura assimétrica Ed25519** (`cryptography`): a **chave privada** nunca entra no
+   binário — vive com o vendedor e é usada só na emissão manual; o app embute apenas a **chave
+   pública** e verifica a assinatura **offline**.
+2. **Licença = arquivo local assinado** (`license.json`): `key_id` + `claims` (`schema`,
+   `customer_id`, `plan`, `issued_at`, `expires_at`, `machine_hash`, `features`, `issuer`) +
+   `signature` (base64). Os claims são serializados de forma **canônica** (JSON com chaves
+   ordenadas e separadores fixos) antes de assinar/verificar, de modo que **qualquer** alteração
+   de campo invalida a assinatura.
+3. **Machine binding por hash**: `machine_hash()` deriva um identificador estável do host
+   (Windows `MachineGuid`, Linux `machine-id`, macOS `IOPlatformUUID`, com fallback
+   `uuid.getnode()` + node + machine). Quando o claim traz `machine_hash`, a licença só vale
+   naquele host.
+4. **Expiração opcional** (`expires_at`) validada contra o relógio UTC local; vitalício = `null`.
+5. **Gate de recurso** (`premium.require_feature`): exige licença **válida** *e* o código do
+   recurso presente em `features`; a falha levanta `PremiumUnavailable` com o motivo, em vez de
+   liberar em silêncio. O primeiro consumidor é o `djlife import` (`premium.ytdlp_import`).
+6. **Comandos** `djlife license machine-id | generate-keypair | issue | status`; `djlife doctor`
+   audita a presença de chave pública/licença e o veredito; a UI (aba *premium*) mostra o estado.
+7. **Config `[license]`** (`public_key`, `license_file`) com defaults em `user_data_dir("djlife")`.
+
+**Consequências**
+- (+) verificação **offline** e barata; sem a chave privada no binário, não há como forjar
+  licenças apenas lendo o app;
+- (+) emissão é um ato manual do vendedor (`issue`), coerente com a venda interpessoal;
+- (+) revogação por expiração (mensal renova com nova licença) e limitação de compartilhamento
+  (machine binding);
+- (+) os claims canônicos impedem troca de `plan`/`features`/`expires_at` sem quebrar a
+  assinatura;
+- (−) adiciona `cryptography` ao núcleo (licença Apache-2.0/BSD, permissiva);
+- (−) o machine binding pode punir *upgrades* de hardware/OS — mitigável emitindo o plano
+  vitalício **sem** `machine_hash`;
+- (−) **não é DRM**: o bytecode Python segue extraível. A proteção real é separar o premium do
+  core e cobrar por valor/suporte, não por obstáculo técnico (reforça a porta de saída da
+  ADR-0001).
 

@@ -93,9 +93,12 @@ def test_capabilities_lists_commands() -> None:
     payload = data.capabilities()
 
     names = {command["name"] for command in payload["commands"]}
-    assert {"scan", "classify", "relink", "ui"} <= names
+    assert {"scan", "classify", "premium", "import", "relink", "ui"} <= names
     assert payload["pipeline"][0]["layer"] == "L0"
     assert payload["safety"]
+    assert payload["premium"]["enabled"] is True
+    assert payload["premium"]["plans"]
+    assert payload["premium"]["license"]["reason"] == "status-nao-carregado"
 
 
 def test_overview_without_catalog_raises(tmp_path) -> None:
@@ -147,7 +150,10 @@ def test_server_serves_assets_and_api(tmp_path, make_wav) -> None:
         assert json.loads(body)["total"] >= 1
 
         _, body = _get(f"{base}/api/capabilities")
-        assert any(cmd["name"] == "ui" for cmd in json.loads(body)["commands"])
+        payload = json.loads(body)
+        assert any(cmd["name"] == "ui" for cmd in payload["commands"])
+        assert payload["premium"]["install"] == 'pip install -e ".[premium]"'
+        assert payload["premium"]["license"]["valid"] is False
 
         _, body = _get(f"{base}/api/version")
         assert json.loads(body)["name"] == "djlife"

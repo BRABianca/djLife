@@ -10,7 +10,7 @@ import sqlite3
 from dataclasses import asdict
 from typing import Any
 
-from djlife import db, report
+from djlife import db, premium, report
 from djlife.config import Config
 from djlife.integrations import base as integrations_base
 
@@ -52,6 +52,27 @@ PIPELINE: tuple[dict[str, str], ...] = (
 )
 
 COMMANDS: tuple[dict[str, str], ...] = (
+    {
+        "name": "premium",
+        "usage": "djlife premium",
+        "summary": "Mostra a camada premium planejada (mensal/vitalicia) e dependencias opcionais.",
+        "detail": "Fase 1: oferta e extras preparados no app; a liberacao comercial pode ser"
+        " manual/interpessoal, sem acoplar gateway ao core offline-first.",
+    },
+    {
+        "name": "license",
+        "usage": "djlife license status|issue|generate-keypair|machine-id",
+        "summary": "Gera, emite e valida licencas offline assinadas por Ed25519.",
+        "detail": "Licenca local com hash de maquina, expiracao opcional e verificacao"
+        " offline para separar o premium do core.",
+    },
+    {
+        "name": "import",
+        "usage": "djlife import URL... [--out DIR] [--format F] [--apply]",
+        "summary": "Importa audio online com yt-dlp (recurso premium, exige licenca).",
+        "detail": "Dry-run por padrao (le metadados); com --apply baixa para --out e sugere"
+        " `djlife scan`. Bloqueado sem licenca valida com o recurso premium.ytdlp_import.",
+    },
     {
         "name": "scan",
         "usage": "djlife scan [RAIZES...]",
@@ -199,6 +220,11 @@ SAFETY: tuple[dict[str, str], ...] = (
     {
         "title": "Offline-first",
         "detail": "DSP e regras rodam localmente; a interface nao envia dados para fora.",
+    },
+    {
+        "title": "Premium desacoplado",
+        "detail": "Liberacao/licenca podem ser geridas manualmente fora do core;"
+        " extras opcionais nao travam scan, plan, apply ou a leitura do catalogo.",
     },
 )
 
@@ -434,10 +460,11 @@ def integrations(cfg: Config) -> dict[str, Any]:
     }
 
 
-def capabilities() -> dict[str, Any]:
+def capabilities(cfg: Config | None = None) -> dict[str, Any]:
     """Descreve funcionalidades, pipeline e politicas de seguranca da ferramenta."""
     return {
         "pipeline": list(PIPELINE),
         "commands": list(COMMANDS),
         "safety": list(SAFETY),
+        "premium": premium.as_payload(cfg),
     }

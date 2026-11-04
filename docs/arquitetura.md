@@ -56,6 +56,14 @@
                  └────────────┘
                         │
                  ┌────────────┐
+                 │  premium   │──▶ planos mensal/vitalicio · extras pagos opcionais (yt-dlp)
+                 └────────────┘
+                        │
+                 ┌────────────┐
+                 │  license   │──▶ Ed25519 · hash da maquina · expiracao · verificacao offline
+                 └────────────┘
+                        │
+                 ┌────────────┐
                  │     ui     │──▶ página local (só leitura) + /api/* JSON
                  └────────────┘
 ```
@@ -140,6 +148,8 @@ djlife undo       → reverte o último apply/dedupe pelo journal
 djlife status     → integridade dos bancos DJ (itens que resolvem p/ arquivos existentes)
 djlife relink     → reposiciona paths nos bancos DJ (dry-run por padrão; `--apply`)
 djlife export     → playlists M3U8 por gênero/subgênero a partir do catálogo (dry-run; `--apply`)
+djlife license    → gera chaves, emite licença, mostra hash da máquina e valida a ativação offline
+djlife import     → ingestão online via yt-dlp (premium; gate de licença; dry-run por padrão)
 djlife doctor     → auditoria somente-leitura do ambiente e do catálogo
 djlife ui         → sobe a interface web local (só leitura) em `127.0.0.1`
 djlife report     → exporta CSV/JSON + estatísticas
@@ -178,15 +188,28 @@ dependências novas e sem build de frontend (ADR-0013).
 |---|---|---|
 | Dados | `ui/data.py` | leituras do catálogo → JSON (`overview`, `tracks`, `duplicates`, `versions`, `integrations`, `capabilities`) |
 | Servidor | `ui/server.py` | `ThreadingHTTPServer` (stdlib): assets em `ui/assets` + endpoints `/api/*` |
-| Assets | `ui/assets/` | `index.html`, `app.css`, `app.js` (dark/neon, grade, scanlines, glitch) |
+| Assets | `ui/assets/` | `index.html`, `app.css`, `app.js` (Tech-Noir / luxo sombrio) |
 
 Endpoints: `/api/overview`, `/api/tracks?q=&limit=`, `/api/duplicates`, `/api/versions`,
 `/api/integrations`, `/api/capabilities`, `/api/version`.
 
 Abas da página: **visão geral**, **biblioteca**, **duplicatas**, **versões**, **integrações** e
-**manual** (pipeline L0→L4, comandos e garantias de segurança). O servidor é **somente
+**premium** e **manual** (pipeline L0→L4, comandos, oferta premium e garantias de segurança).
+O servidor é **somente
 leitura**: abre conexões efêmeras, não escreve no catálogo nem no filesystem, escuta em
 `127.0.0.1` por padrão e resolve assets bloqueando travessia de diretório.
+
+## 7.1 Licenciamento offline do premium
+
+O premium é separado do core por uma licença local validada offline:
+
+- a **chave privada** fica fora do produto e serve apenas para emissão manual;
+- o app carrega apenas a **chave pública** para verificar a assinatura Ed25519;
+- a licença (`license.json`) inclui `customer_id`, `plan`, `issued_at`, `expires_at`,
+  `machine_hash` e `features`;
+- o `machine_hash` é derivado da máquina local e pode prender a licença a um único host;
+- `djlife license status` e `djlife doctor` mostram se a licença está ausente, expirada,
+  assinada por outra chave ou vinculada a outra máquina.
 
 ## 8. Performance
 
@@ -211,6 +234,7 @@ leitura**: abre conexões efêmeras, não escreve no catálogo nem no filesystem
 | Análise (opcional) | `essentia` | AGPL-3.0 | extra `essentia`; **sem wheel Windows** (WSL2/Docker) |
 | Embeddings (L3) | `torch` + `transformers` | BSD-3/Apache-2.0 | extra `ml`; CLAP (`laion/clap-htsat-unfused`) e MERT (`m-a-p/MERT-v1-95M`), rodam em CPU |
 | Embeddings (L4) | `muq` | MIT (pesos CC-BY-NC) | extra `muq`; MuQ (`OpenMuQ/MuQ-large-msd-iter`), roda em CPU |
+| Premium / ingestão online | `yt-dlp` | Unlicense | extra `premium`; base opcional para recursos pagos/importação |
 | Modelos de gênero | MERT/MuQ/MAEST | CC BY-NC | uso pessoal |
 
 Extras opcionais: `pip install -e ".[fingerprint,rekordbox,analysis]"`; no Linux/WSL2,
