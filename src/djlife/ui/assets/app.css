@@ -711,6 +711,74 @@ td.num {
   color: #e9dac6;
 }
 
+.hidden { display: none !important; }
+
+.admin-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.admin-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.admin-form input,
+.admin-form select {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 100%),
+    rgba(255, 255, 255, 0.015);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.admin-form input:focus,
+.admin-form select:focus {
+  border-color: rgba(184, 154, 115, 0.45);
+  box-shadow: 0 0 0 4px rgba(184, 154, 115, 0.08);
+}
+
+.admin-form .admin-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.admin-form .admin-check input { width: auto; }
+
+.btn.ghost {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+  padding: 6px 12px;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+}
+
+.btn.ghost:hover {
+  border-color: rgba(184, 152, 105, 0.55);
+  color: var(--text);
+}
+
+.panel h3 .btn.ghost { float: right; }
+
+table.table td .btn.ghost { margin: 0 6px 4px 0; }
+
 .empty {
   color: var(--muted);
   font-size: 12.5px;
