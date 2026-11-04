@@ -7,8 +7,9 @@ import os
 import platform
 import subprocess
 import uuid
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ from platformdirs import user_data_dir
 
 APP_NAME = "djlife"
 LICENSE_SCHEMA = 1
+OWNER_PLAN = "owner"
+WILDCARD_FEATURE = "*"
 
 
 class LicenseError(RuntimeError):
@@ -88,6 +91,26 @@ def _b64encode(value: bytes) -> str:
 
 def _b64decode(value: str) -> bytes:
     return base64.b64decode(value.encode("ascii"))
+
+
+def parse_expiration(days: int | None = None, expires: str | None = None) -> datetime | None:
+    """Converte `days`/`expires` em um datetime UTC; vazio significa sem expiracao."""
+    if days is not None and expires is not None:
+        raise ValueError("Use apenas um entre days e expires.")
+    if expires is not None:
+        try:
+            parsed = datetime.fromisoformat(expires)
+        except ValueError as exc:
+            raise ValueError("Use YYYY-MM-DD em expires.") from exc
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    if days is not None:
+        return utcnow() + timedelta(days=days)
+    return None
+
+
+def feature_granted(features: Sequence[str], required: str) -> bool:
+    """Recurso liberado quando listado na licenca ou coberto pelo curinga de owner."""
+    return WILDCARD_FEATURE in features or required in features
 
 
 def _canonical_claims(claims: LicenseClaims) -> bytes:
@@ -178,9 +201,15 @@ def machine_summary() -> dict[str, str]:
     }
 
 
-def load_private_key(path: Path | str) -> Ed25519PrivateKey:
+def load_private_key(path: Path | str, passphrase: str | None = None) -> Ed25519PrivateKey:
     data = Path(path).read_bytes()
-    key = serialization.load_pem_private_key(data, password=None)
+    secret = passphrase.encode("utf-8") if passphrase else None
+    try:
+        key = serialization.load_pem_private_key(data, password=secret)
+    except (TypeError, ValueError) as exc:
+        raise LicenseError(
+            "Nao foi possivel abrir a chave privada (passphrase incorreta?)."
+        ) from exc
     if not isinstance(key, Ed25519PrivateKey):
         raise LicenseError("Chave privada invalida para Ed25519.")
     return key
@@ -194,13 +223,23 @@ def load_public_key(path: Path | str) -> Ed25519PublicKey:
     return key
 
 
-def generate_keypair(private_path: Path | str, public_path: Path | str) -> tuple[Path, Path]:
+def generate_keypair(
+    private_path: Path | str,
+    public_path: Path | str,
+    *,
+    passphrase: str | None = None,
+) -> tuple[Path, Path]:
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
+    encryption: serialization.KeySerializationEncryption = (
+        serialization.BestAvailableEncryption(passphrase.encode("utf-8"))
+        if passphrase
+        else serialization.NoEncryption()
+    )
     private_bytes = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
+        encryption_algorithm=encryption,
     )
     public_bytes = public_key.public_bytes(
         encoding=serialization.Encoding.PEM,
@@ -225,8 +264,9 @@ def issue_license(
     machine_hash_value: str | None,
     expires_at: datetime | None,
     issuer: str | None = None,
+    private_key_password: str | None = None,
 ) -> LicenseEnvelope:
-    private_key = load_private_key(private_key_path)
+    private_key = load_private_key(private_key_path, private_key_password)
     public_key = private_key.public_key()
     claims = LicenseClaims(
         schema=LICENSE_SCHEMA,
@@ -332,7 +372,9 @@ def verify_envelope(
             )
 
     missing = tuple(
-        feature for feature in required_features if feature not in envelope.claims.features
+        feature
+        for feature in required_features
+        if not feature_granted(envelope.claims.features, feature)
     )
     if missing:
         return LicenseStatus(

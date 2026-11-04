@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +15,7 @@ from rich.table import Table
 
 from djlife import (
     __version__,
+    admin,
     classifier,
     curation,
     db,
@@ -25,6 +26,7 @@ from djlife import (
     playlists,
     premium,
     quarantine,
+    registry,
     report,
     scanner,
     tags,
@@ -1418,17 +1420,10 @@ def _license_status_table(status: license_mod.LicenseStatus) -> Table:
 
 
 def _parse_expiration(days: int | None, expires: str | None) -> datetime | None:
-    if days is not None and expires is not None:
-        raise typer.BadParameter("Use apenas um entre --days e --expires.")
-    if expires is not None:
-        try:
-            parsed = datetime.fromisoformat(expires)
-        except ValueError as exc:
-            raise typer.BadParameter("Use YYYY-MM-DD em --expires.") from exc
-        return parsed.replace(tzinfo=UTC)
-    if days is not None:
-        return license_mod.utcnow() + timedelta(days=days)
-    return None
+    try:
+        return license_mod.parse_expiration(days, expires)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @license_app.command("machine-id")
@@ -1443,31 +1438,47 @@ def license_machine_id_cmd() -> None:
     console.print(table)
 
 
+def _prompt_passphrase() -> str:
+    value = typer.prompt("Passphrase da chave privada", hide_input=True, confirmation_prompt=True)
+    return str(value)
+
+
 @license_app.command("generate-keypair")
 def license_generate_keypair_cmd(
     private_key: Annotated[
         Path, typer.Option("--private-key", help="Destino da chave privada PEM.")
-    ] = Path("secrets/license_private_key.pem"),
+    ] = config_mod.DEFAULT_PRIVATE_KEY,
     public_key: Annotated[
         Path, typer.Option("--public-key", help="Destino da chave publica PEM.")
     ] = Path("secrets/license_public_key.pem"),
+    encrypt: Annotated[
+        bool, typer.Option("--encrypt", help="Cifra a chave privada com uma passphrase.")
+    ] = False,
 ) -> None:
     """Gera um par de chaves Ed25519 para emissao e validacao offline."""
-    private_out, public_out = license_mod.generate_keypair(private_key, public_key)
-    console.print(f"Chave privada: {private_out}")
+    passphrase = _prompt_passphrase() if encrypt else None
+    private_out, public_out = license_mod.generate_keypair(
+        private_key, public_key, passphrase=passphrase
+    )
+    console.print(f"Chave privada: {private_out}{' (cifrada)' if passphrase else ''}")
     console.print(f"Chave publica: {public_out}")
 
 
 @license_app.command("issue")
 def license_issue_cmd(
     customer_id: Annotated[str, typer.Option("--customer-id", help="Identificador do cliente.")],
-    plan: Annotated[str, typer.Option("--plan", help="Plano da licenca (monthly/lifetime).")],
+    plan: Annotated[
+        str, typer.Option("--plan", help="Plano da licenca (monthly/lifetime/owner).")
+    ] = "lifetime",
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
     private_key: Annotated[
         Path, typer.Option("--private-key", help="Chave privada PEM usada para assinar.")
-    ] = Path("secrets/license_private_key.pem"),
+    ] = config_mod.DEFAULT_PRIVATE_KEY,
     output: Annotated[
-        Path, typer.Option("--out", help="Arquivo .json da licenca assinada.")
-    ] = Path("dist/license.json"),
+        Path | None, typer.Option("--out", help="Arquivo .json da licenca assinada.")
+    ] = None,
     feature: Annotated[
         list[str] | None, typer.Option("--feature", help="Recurso liberado; repita a opcao.")
     ] = None,
@@ -1486,23 +1497,164 @@ def license_issue_cmd(
     bind_current_machine: Annotated[
         bool, typer.Option("--bind-current-machine", help="Vincula a licenca a esta maquina.")
     ] = False,
+    private_key_password: Annotated[
+        str | None, typer.Option("--private-key-password", help="Passphrase da chave privada.")
+    ] = None,
 ) -> None:
-    """Emite uma licenca offline assinada por Ed25519."""
-    features = tuple(feature or premium.feature_codes())
-    bound_machine = license_mod.machine_hash() if bind_current_machine else machine_hash
-    envelope = license_mod.issue_license(
-        private_key,
-        output,
-        customer_id=customer_id,
-        plan=plan,
-        features=features,
-        machine_hash_value=bound_machine,
-        expires_at=_parse_expiration(days, expires),
-        issuer=issuer,
-    )
-    console.print(f"Licenca emitida: {output}")
-    console.print(f"Key ID: {envelope.key_id}")
-    console.print(f"Recursos: {', '.join(envelope.claims.features)}")
+    """Emite uma licenca offline assinada por Ed25519 e registra no painel."""
+    cfg = config_mod.load_config(config)
+    try:
+        result = admin.issue(
+            cfg,
+            customer_id=customer_id,
+            plan=plan,
+            features=tuple(feature) if feature else None,
+            machine_hash=machine_hash,
+            bind_current_machine=bind_current_machine,
+            days=days,
+            expires=expires,
+            issuer=issuer,
+            output=output,
+            passphrase=private_key_password,
+            private_key=private_key,
+        )
+    except (license_mod.LicenseError, registry.RegistryError, ValueError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Licenca emitida: {result['path']}")
+    console.print(f"Key ID: {result['key_id']}")
+    console.print(f"Recursos: {', '.join(result['claims']['features'])}")
+    console.print(f"Registro: {result['record']['id']}")
+
+
+@license_app.command("owner")
+def license_owner_cmd(
+    customer_id: Annotated[
+        str, typer.Option("--customer-id", help="Identificador da dona da licenca.")
+    ] = "owner",
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+    encrypt: Annotated[
+        bool, typer.Option("--encrypt", help="Cifra a chave privada com uma passphrase.")
+    ] = True,
+    issuer: Annotated[
+        str | None, typer.Option("--issuer", help="Nome/responsavel pela emissao.")
+    ] = None,
+) -> None:
+    """Ativa o modo owner: gera chaves, emite a licenca curinga e instala localmente."""
+    cfg = config_mod.load_config(config)
+    passphrase = _prompt_passphrase() if encrypt else None
+    try:
+        result = admin.activate_owner(
+            cfg,
+            customer_id=customer_id,
+            passphrase=passphrase,
+            encrypt=encrypt,
+            issuer=issuer,
+        )
+    except (license_mod.LicenseError, registry.RegistryError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Chave privada: {result['private_key']}")
+    console.print(f"Chave publica: {result['public_key']}")
+    console.print(f"Licenca owner instalada: {result['license']}")
+    console.print("[green]Modo owner ativo: acesso total aos recursos premium.[/green]")
+
+
+@license_app.command("list")
+def license_list_cmd(
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Lista as licencas registradas no painel local."""
+    cfg = config_mod.load_config(config)
+    try:
+        records = registry.load_records(cfg.license.registry_path)
+    except registry.RegistryError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
+    if not records:
+        console.print(f"[dim]Nenhuma licenca registrada em {cfg.license.registry_path}.[/dim]")
+        return
+    table = Table(title="Licencas registradas", box=None)
+    for column in ("ID", "Cliente", "Plano", "Status", "Expira", "Maquina"):
+        table.add_column(column)
+    for record in records:
+        status = registry.effective_status(record)
+        table.add_row(
+            record.id,
+            record.customer_id,
+            record.plan,
+            status,
+            record.expires_at or "-",
+            (record.machine_hash or "-")[:12],
+        )
+    console.print(table)
+    console.print(f"[dim]Registro: {cfg.license.registry_path}[/dim]")
+
+
+@license_app.command("renew")
+def license_renew_cmd(
+    record_id: Annotated[str, typer.Argument(help="ID do registro da licenca.")],
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+    private_key: Annotated[
+        Path, typer.Option("--private-key", help="Chave privada PEM usada para assinar.")
+    ] = config_mod.DEFAULT_PRIVATE_KEY,
+    plan: Annotated[str | None, typer.Option("--plan", help="Troca o plano (opcional).")] = None,
+    days: Annotated[
+        int | None, typer.Option("--days", help="Nova validade em dias a partir de agora.")
+    ] = None,
+    expires: Annotated[
+        str | None, typer.Option("--expires", help="Nova data de expiracao YYYY-MM-DD.")
+    ] = None,
+    issuer: Annotated[
+        str | None, typer.Option("--issuer", help="Nome/responsavel pela emissao.")
+    ] = None,
+    private_key_password: Annotated[
+        str | None, typer.Option("--private-key-password", help="Passphrase da chave privada.")
+    ] = None,
+) -> None:
+    """Reemite a licenca de um registro ativo, atualizando validade/plano."""
+    cfg = config_mod.load_config(config)
+    try:
+        result = admin.renew(
+            cfg,
+            record_id,
+            plan=plan,
+            days=days,
+            expires=expires,
+            issuer=issuer,
+            passphrase=private_key_password,
+            private_key=private_key,
+        )
+    except (license_mod.LicenseError, registry.RegistryError, ValueError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Licenca renovada: {result['path']}")
+    console.print(f"Key ID: {result['key_id']}")
+
+
+@license_app.command("revoke")
+def license_revoke_cmd(
+    record_id: Annotated[str, typer.Argument(help="ID do registro da licenca.")],
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+    reason: Annotated[str | None, typer.Option("--reason", help="Motivo da revogacao.")] = None,
+) -> None:
+    """Marca um registro como revogado no painel local."""
+    cfg = config_mod.load_config(config)
+    try:
+        result = admin.revoke(cfg, record_id, reason=reason)
+    except registry.RegistryError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Licenca {record_id}: {result['record']['effective_status']}")
+    console.print(f"[dim]{result['note']}[/dim]")
 
 
 @license_app.command("status")

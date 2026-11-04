@@ -32,6 +32,8 @@ class PremiumFeature:
 
 
 YTDLP_IMPORT_FEATURE = "premium.ytdlp_import"
+OWNER_PLAN = license_mod.OWNER_PLAN
+WILDCARD_FEATURE = license_mod.WILDCARD_FEATURE
 
 
 PLANS: tuple[PremiumPlan, ...] = (
@@ -87,6 +89,17 @@ def feature_codes() -> tuple[str, ...]:
     return tuple(feature.code for feature in FEATURES)
 
 
+def owner_features() -> tuple[str, ...]:
+    """Recursos da licenca owner: curinga que libera todos os recursos premium."""
+    return (WILDCARD_FEATURE,)
+
+
+def is_owner(cfg: Config) -> bool:
+    """Verdadeiro quando a licenca carregada e do plano owner (acesso total)."""
+    status = license_status(cfg)
+    return status.valid and status.plan == OWNER_PLAN
+
+
 def license_status(cfg: Config) -> license_mod.LicenseStatus:
     return license_mod.status_from_paths(
         license_path=cfg.license.license_path,
@@ -109,15 +122,15 @@ def require_feature(cfg: Config, feature_code: str) -> None:
 
 def as_payload(cfg: Config | None = None) -> dict[str, object]:
     """Serializa os metadados premium para a UI/API."""
-    status = (
-        license_mod.status_payload(license_status(cfg))
+    current = (
+        license_status(cfg)
         if cfg is not None
-        else license_mod.status_payload(
-            license_mod.LicenseStatus(False, "status-nao-carregado", features=feature_codes())
-        )
+        else license_mod.LicenseStatus(False, "status-nao-carregado", features=feature_codes())
     )
+    status = license_mod.status_payload(current)
     return {
         "enabled": True,
+        "owner": current.valid and current.plan == OWNER_PLAN,
         "checkout": "manual/interpessoal",
         "plans": [asdict(plan) for plan in PLANS],
         "features": [asdict(feature) for feature in FEATURES],
