@@ -509,6 +509,12 @@ td.num { color: var(--cyan); text-align: right; white-space: nowrap; }
 
 .banner.hidden { display: none; }
 
+.banner.beta {
+  border-color: rgba(255, 176, 32, 0.5);
+  background: rgba(255, 176, 32, 0.08);
+  color: #ffe6bf;
+}
+
 .empty { color: var(--muted); font-size: 12.5px; padding: 10px 0; }
 
 .foot {

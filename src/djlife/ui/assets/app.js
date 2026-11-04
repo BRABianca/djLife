@@ -234,11 +234,15 @@ async function loadVersions() {
 async function loadIntegrations() {
   const data = await api("/api/integrations");
 
+  const notice = $("#integrations-notice");
+  notice.textContent = data.notice || "Integracoes Rekordbox/Serato em beta.";
+  notice.classList.remove("hidden");
+
   $("#integrations-cards").innerHTML = data.reports
     .map((report) => {
       if (!report.available) {
         return `<div class="card">
-          <span class="label">${esc(report.software)}</span>
+          <span class="label">${esc(report.software)} <span class="badge warn">beta</span></span>
           <span class="value small is-warn">indisponivel</span>
           <div class="hint">${esc(report.error)}</div>
         </div>`;
@@ -246,7 +250,7 @@ async function loadIntegrations() {
       const tone = report.missing ? "is-warn" : "is-ok";
       const sample = report.samples.length ? `<div class="hint">ex: ${esc(report.samples[0])}</div>` : "";
       return `<div class="card">
-        <span class="label">${esc(report.software)}</span>
+        <span class="label">${esc(report.software)} <span class="badge warn">beta</span></span>
         <span class="value ${tone}">${num(report.resolved)}/${num(report.total)}</span>
         <div class="hint">resolvidos · ${num(report.missing)} ausentes</div>
         ${sample}

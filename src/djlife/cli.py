@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import Progress
 from rich.table import Table
 
 from djlife import (
     __version__,
     classifier,
+    curation,
     db,
     dedupe,
+    doctor,
     planner,
+    playlists,
     quarantine,
     report,
     scanner,
@@ -309,6 +315,83 @@ def report_cmd(
 
 
 app.command(name="report")(report_cmd)
+
+
+def _print_export_plan(built: playlists.ExportPlan, preview: int) -> None:
+    summary = Table(title=f"Export - {built.group_by} -> {built.out_dir}")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Playlists", str(len(built.playlists)))
+    summary.add_row("Faixas", str(built.total))
+    console.print(summary)
+
+    if preview > 0 and built.playlists:
+        shown = built.playlists[:preview]
+        table = Table(title=f"Playlists ({len(shown)} de {len(built.playlists)})")
+        table.add_column("Playlist")
+        table.add_column("Faixas", justify="right")
+        for playlist in shown:
+            table.add_row(str(playlist.relative), str(len(playlist.tracks)))
+        console.print(table)
+
+
+def _print_export_result(result: playlists.ExportResult) -> None:
+    summary = Table(title=f"Export - {result.out_dir}")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Playlists gravadas", str(result.playlists))
+    summary.add_row("Faixas", str(result.tracks))
+    summary.add_row("Erros", str(result.errors))
+    console.print(summary)
+
+
+@app.command()
+def export(
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Diretorio de saida das playlists.")
+    ] = None,
+    by: Annotated[
+        str, typer.Option("--by", help="Agrupar por genre ou subgenre (padrao: genre).")
+    ] = "genre",
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Grava os arquivos .m3u8 em disco.")
+    ] = False,
+    preview: Annotated[
+        int, typer.Option("--preview", "-n", help="Playlists exibidas na previa.")
+    ] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Gera playlists M3U8 por genero/subgenero a partir do catalogo (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    destination = out
+    if destination is None:
+        if cfg.files.target is None:
+            conn.close()
+            console.print("[red]Defina files.target na config ou use --out.[/red]")
+            raise typer.Exit(code=1)
+        destination = Path(cfg.files.target) / "_playlists"
+
+    try:
+        built = playlists.build_plan(
+            conn, out_dir=destination, group_by=by, unknown_dir=cfg.files.unknown_dir
+        )
+    except ValueError as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    conn.close()
+
+    _print_export_plan(built, preview)
+    if not apply:
+        return
+    if not built.playlists:
+        console.print("[yellow]Nada a exportar.[/yellow]")
+        return
+
+    result = playlists.write(built)
+    _print_export_result(result)
 
 
 def _resolve_target(cfg: config_mod.Config, override: Path | None) -> Path:
@@ -946,10 +1029,14 @@ def status(
         "djlife.toml"
     ),
 ) -> None:
-    """Verifica a integridade dos bancos DJ (itens que resolvem para arquivos existentes)."""
+    """Verifica a integridade dos bancos DJ (BETA: itens que resolvem para arquivos)."""
     cfg = config_mod.load_config(config)
+    console.print(
+        "[dim]Integracoes Rekordbox/Serato estao em [bold]beta[/bold]:"
+        " o funcionamento nao e garantido.[/dim]"
+    )
 
-    table = Table(title="Integridade das bibliotecas DJ")
+    table = Table(title="Integridade das bibliotecas DJ (beta)")
     table.add_column("Software")
     table.add_column("Itens", justify="right")
     table.add_column("Resolvidos", justify="right")
@@ -1027,8 +1114,12 @@ def relink(
         "djlife.toml"
     ),
 ) -> None:
-    """Aponta os bancos DJ para os destinos atuais do catalogo (dry-run por padrao)."""
+    """Aponta os bancos DJ para os destinos atuais do catalogo (BETA, dry-run por padrao)."""
     cfg, conn = _open_catalog(config)
+    console.print(
+        "[dim]Integracoes Rekordbox/Serato estao em [bold]beta[/bold]:"
+        " o funcionamento nao e garantido.[/dim]"
+    )
     try:
         mapping = resolve_move_mapping(conn)
     finally:
@@ -1083,6 +1174,215 @@ def relink(
 
     if failed:
         raise typer.Exit(code=1)
+
+
+_DOCTOR_TONE = {
+    "ok": "[green]ok[/green]",
+    "warn": "[yellow]warn[/yellow]",
+    "fail": "[red]fail[/red]",
+}
+
+
+def doctor_cmd(
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Audita o ambiente e a organizacao do catalogo (somente leitura)."""
+    cfg = config_mod.load_config(config)
+    checks = doctor.run(cfg)
+
+    table = Table(title="Doctor")
+    table.add_column("Verificacao")
+    table.add_column("Estado")
+    table.add_column("Detalhe")
+    for check in checks:
+        tone = _DOCTOR_TONE.get(check.status, check.status)
+        table.add_row(escape(check.name), tone, escape(check.detail))
+    console.print(table)
+
+    if any(check.status == doctor.FAIL for check in checks):
+        raise typer.Exit(code=1)
+
+
+app.command(name="doctor")(doctor_cmd)
+
+
+_LEVEL_TONE = {
+    curation.LEVEL_DIVERGENTE: "[red]divergente[/red]",
+    curation.LEVEL_AMBIGUA: "[yellow]ambigua[/yellow]",
+}
+
+
+def _open_path(path: str) -> None:
+    """Abre o arquivo no aplicativo padrao do sistema (best-effort)."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        elif sys.platform.startswith("win"):
+            subprocess.Popen(["cmd", "/c", "start", "", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except OSError as exc:
+        console.print(f"  [red]Nao foi possivel abrir: {exc}[/red]")
+
+
+def _search_choices(choices: list[curation.Choice], needle: str) -> list[curation.Choice]:
+    return [
+        choice
+        for choice in choices
+        if needle in choice.label.casefold() or needle in choice.slug.casefold()
+    ]
+
+
+def _print_choices(choices: list[curation.Choice]) -> None:
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Genero")
+    for index, choice in enumerate(choices, start=1):
+        table.add_row(str(index), f"{escape(choice.label)} [dim]({escape(choice.slug)})[/dim]")
+    console.print(table)
+
+
+def _print_review_item(item: curation.ReviewItem) -> None:
+    title = item.title or Path(item.path).stem
+    console.print(f"[bold]{escape(item.artist or '')}[/bold] - {escape(title)}")
+    console.print(f"[dim]{escape(item.path)}[/dim]")
+    for signal in item.signals:
+        console.print(f"  {signal.source:<9} {escape(signal.label)} [dim]({signal.confidence})[/dim]")
+    suggestion = escape(item.suggestion.label)
+    console.print(f"  [yellow]{item.level}[/yellow] -> sugestao: [bold]{suggestion}[/bold]")
+
+
+def _print_review_queue(items: list[curation.ReviewItem], preview: int = 20) -> None:
+    if not items:
+        console.print("[green]Nenhum conflito de genero entre as fontes.[/green]")
+        return
+    table = Table(title=f"Curadoria - {len(items)} faixa(s) com conflito")
+    table.add_column("#", justify="right")
+    table.add_column("Faixa")
+    table.add_column("Sinais")
+    table.add_column("Nivel")
+    for index, item in enumerate(items[:preview], start=1):
+        signals = "\n".join(
+            f"{signal.source}: {signal.label} ({signal.confidence})" for signal in item.signals
+        )
+        label = f"{item.artist or '-'} - {item.title or Path(item.path).stem}"
+        table.add_row(
+            str(index), escape(label), escape(signals), _LEVEL_TONE.get(item.level, item.level)
+        )
+    console.print(table)
+    if len(items) > preview:
+        console.print(f"[dim]... e mais {len(items) - preview} faixa(s); use --limit.[/dim]")
+
+
+def _apply_choice(
+    conn: sqlite3.Connection, item: curation.ReviewItem, genre_id: int, label: str
+) -> str:
+    curation.record_decision(conn, item.track_id, genre_id)
+    console.print(f"  [green]ok[/green] -> {escape(label)}")
+    return "assigned"
+
+
+def _decide(
+    conn: sqlite3.Connection, item: curation.ReviewItem, choices: list[curation.Choice]
+) -> str:
+    shown: list[curation.Choice] = []
+    while True:
+        answer = typer.prompt(
+            "[Enter]=sugestao  [p] abrir  [s] pular  [k] manter  [q] sair  |  numero ou busca",
+            default="",
+            show_default=False,
+        ).strip()
+        low = answer.lower()
+        if low == "q":
+            return "quit"
+        if low == "s":
+            return "skipped"
+        if low == "p":
+            _open_path(item.path)
+            continue
+        if low in ("", "k"):
+            suggestion = item.suggestion
+            return _apply_choice(conn, item, suggestion.genre_id, suggestion.label)
+        if answer.isdigit():
+            position = int(answer)
+            if 1 <= position <= len(shown):
+                chosen = shown[position - 1]
+                return _apply_choice(conn, item, chosen.genre_id, chosen.label)
+            console.print("  [red]Numero fora da lista exibida.[/red]")
+            continue
+        matches = _search_choices(choices, low)
+        if not matches:
+            console.print("  [red]Nenhum genero corresponde; tente outro termo.[/red]")
+            continue
+        if len(matches) == 1:
+            return _apply_choice(conn, item, matches[0].genre_id, matches[0].label)
+        shown = matches
+        _print_choices(shown)
+        continue
+
+
+def _run_review(
+    conn: sqlite3.Connection,
+    items: list[curation.ReviewItem],
+    choices: list[curation.Choice],
+    *,
+    open_audio: bool,
+) -> None:
+    total = len(items)
+    decided = 0
+    skipped = 0
+    for index, item in enumerate(items, start=1):
+        console.rule(f"[bold cyan]{index}/{total}[/bold cyan]")
+        _print_review_item(item)
+        if open_audio:
+            _open_path(item.path)
+        try:
+            outcome = _decide(conn, item, choices)
+        except (KeyboardInterrupt, typer.Abort):
+            console.print()
+            break
+        if outcome == "quit":
+            break
+        if outcome == "assigned":
+            decided += 1
+        else:
+            skipped += 1
+    console.print(f"[green]Decisoes gravadas:[/green] {decided} | [dim]sem decisao:[/dim] {skipped}")
+
+
+@app.command()
+def review(
+    list_only: Annotated[
+        bool, typer.Option("--list", help="Somente lista a fila de conflitos, sem revisar.")
+    ] = False,
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", help="Revisa no maximo N faixas (0 = todas).")
+    ] = 0,
+    open_audio: Annotated[
+        bool, typer.Option("--open", help="Abre cada faixa no player padrao ao revisar.")
+    ] = False,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Revisa manualmente as faixas cujo genero diverge entre as fontes (tags/regras/embeddings)."""
+    _, conn = _open_catalog(config)
+    try:
+        items = curation.build_queue(conn)
+        if limit > 0:
+            items = items[:limit]
+        _print_review_queue(items)
+        if list_only or not items:
+            return
+        choices = curation.genre_choices(conn)
+        if not choices:
+            console.print("[yellow]Taxonomia vazia; rode `djlife scan` para carregar os generos.[/yellow]")
+            return
+        _run_review(conn, items, choices, open_audio=open_audio)
+    finally:
+        conn.close()
 
 
 @app.command()

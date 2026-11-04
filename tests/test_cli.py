@@ -23,6 +23,7 @@ def test_help_flag() -> None:
     assert "apply-cmd" not in result.stdout
     assert "dedupe-cmd" not in result.stdout
     assert "versions-cmd" not in result.stdout
+    assert "doctor-cmd" not in result.stdout
     assert "plan" in result.stdout
     assert "undo" in result.stdout
     assert "duplicates" in result.stdout
@@ -34,6 +35,8 @@ def test_help_flag() -> None:
     assert "analyze" in result.stdout
     assert "embed" in result.stdout
     assert "neighbors" in result.stdout
+    assert "doctor" in result.stdout
+    assert "export" in result.stdout
 
 
 def test_scan_command(tmp_path, make_wav) -> None:
@@ -459,3 +462,43 @@ def test_neighbors_apply_writes_proposals(tmp_path, make_wav) -> None:
     conn.close()
     assert len(rows) == 1
     assert rows[0]["source"] == "embedding"
+
+
+def test_doctor_command(tmp_path, make_wav) -> None:
+    config = _scanned_library(tmp_path, make_wav)
+    result = runner.invoke(app, ["doctor", "--config", str(config)])
+    assert result.exit_code == 0
+    assert "Doctor" in result.stdout
+    assert "catalogo" in result.stdout
+    assert "[ml]" in result.stdout
+
+
+def test_doctor_missing_catalog_fails(tmp_path) -> None:
+    config = tmp_path / "djlife.toml"
+    config.write_text(
+        f'[catalog]\npath = "{(tmp_path / "nao_existe.db").as_posix()}"\n', encoding="utf-8"
+    )
+    result = runner.invoke(app, ["doctor", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "nao encontrado" in result.stdout
+
+
+def test_export_dry_run_then_apply(tmp_path, make_wav) -> None:
+    config, out = _classified_library(tmp_path, make_wav)
+
+    dry = runner.invoke(app, ["export", "--config", str(config)])
+    assert dry.exit_code == 0
+    assert "Export -" in dry.stdout
+    assert not list(out.rglob("*.m3u8"))
+
+    applied = runner.invoke(app, ["export", "--apply", "--config", str(config)])
+    assert applied.exit_code == 0
+    assert "Playlists gravadas" in applied.stdout
+    assert (out / "_playlists" / "House.m3u8").exists()
+
+
+def test_export_invalid_group_by(tmp_path, make_wav) -> None:
+    config, _out = _classified_library(tmp_path, make_wav)
+    result = runner.invoke(app, ["export", "--by", "bpm", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "group_by" in result.stdout
