@@ -22,8 +22,8 @@ def _library(tmp_path, make_wav):
     rules = tmp_path / "genres.local.yaml"
     rules.write_text(
         'version: "0.1.0"\nrules:\n'
-        "  - name: lib\n    field: path\n    match: \"lib\"\n"
-        '    genre: house\n    confidence: B\n',
+        '  - name: lib\n    field: path\n    match: "lib"\n'
+        "    genre: house\n    confidence: B\n",
         encoding="utf-8",
     )
     config = tmp_path / "djlife.toml"
@@ -52,8 +52,9 @@ def test_overview_reports_catalog(tmp_path, make_wav) -> None:
     assert payload["stats"]["files"] == 2
     assert payload["stats"]["tracks"] == 2
     assert payload["classification"]["classified"] >= 1
-    assert payload["catalog"]["schema_version"] == "3"
+    assert payload["catalog"]["schema_version"] == "4"
     assert payload["duplicates"]["total"] >= 1
+    assert payload["embeddings"]["files"] == 0
 
 
 def test_tracks_search(tmp_path, make_wav) -> None:

@@ -309,3 +309,243 @@ sem novas dependências:
 - (−) resolver o asset é feito em disco (`ui/assets`), o que exige o pacote instalado com os
   arquivos não-Python (garantido pelo wheel do hatchling).
 
+---
+
+## ADR-0014 — Análise de áudio com backend plugável: `librosa` + `essentia`
+
+**Status:** aceita (2026-10-29)
+
+**Contexto**
+O L2 do pipeline precisa de BPM e tonalidade (para Camelot/Open Key). O Essentia seria a
+escolha natural em qualidade, mas **não publica wheel para Windows** (o upstream aponta WSL) e
+é **AGPL-3.0** — dependência que não pode entrar no núcleo. Ao mesmo tempo, o ambiente de
+desenvolvimento é Windows e a análise precisa rodar *hoje*, sem container.
+
+**Decisão**
+Backend de análise **plugável**, com contrato `Analyzer` (`name`, `version`, `analyze`) e
+registro em `analysis/base.py`:
+
+- **padrão:** `librosa` + `soundfile` (extra `analysis`) — roda nativo no Windows, licença ISC;
+  BPM via `beats.beat_track` (normalizado para 70–180) e tonalidade via croma CQT + perfis de
+  Krumhansl-Kessler, convertidos para Camelot/Open Key em `analysis/camelot.py`;
+- **opcional:** `essentia` (extra `essentia`), selecionável por `[analysis].backend` ou
+  `--backend`, para Linux/WSL2/Docker;
+- **import tardio** em ambos (`AnalysisUnavailable` com o hint do extra), como em
+  `integrations` e `dedupe`;
+- **`analysis_version`** distingue análise completa (`1`) de *fast analysis* (`fast-1`, primeiros
+  `fast_seconds`), permitindo as duas coexistirem na UNIQUE `(file_id, analyzer, analysis_version)`;
+- execução em duas etapas: `build_plan` (dry-run) e `apply_plan` (upsert em `audio_analysis`;
+  falhas por arquivo vão para `scan_errors` e não interrompem o lote).
+
+**Consequências**
+- (+) análise funcional no Windows sem WSL/Docker e sem trazer AGPL para o núcleo;
+- (+) trocar/adicionar analisador é só implementar o protocolo — `audio_analysis` já é
+  multi-analisador (`analyzer` + `analysis_version`);
+- (+) desempenho/precisão podem ser comparados entre backends no mesmo catálogo;
+- (−) a precisão do `librosa` é menor que a do Essentia (suficiente para triagem, não para
+  substituir o BPM do Rekordbox);
+- (−) cada backend carrega dependências pesadas (numpy/scipy/numba); o extra `analysis` infla
+  o ambiente de quem instala, e o empacotamento PyInstaller precisa dos dois como extras.
+
+---
+
+## ADR-0015 — Embeddings de áudio (L3) com backend plugável e k-NN (schema v4)
+
+**Status:** aceita (2026-10-29)
+
+**Contexto**
+O L3 do pipeline precisa cobrir os casos que tags (L0) e regras (L1) não resolvem: faixas sem
+metadados úteis, mas acusticamente parecidas com as já rotuladas. Modelos de gênero
+supervisionados (MERT, MuQ) são **CC BY-NC** e exigem treino/rotulagem; vetores genéricos
+(CLAP) resolvem por **similaridade**, reusando os rótulos que o catálogo já tem. Rodar
+inferência pesada no Windows e guardá-la no SQLite sem inflar as dependências do núcleo
+(o extra CLAP é `torch` + `transformers`, ~2 GB) é o desafio de projeto.
+
+**Decisão**
+
+1. **Camada plugável** `ml/`: contrato `Embedder` (`name`, `version`, `dim`, `embed`) + registro
+   em `ml/base.py`; primeiro backend `clap` (`laion/clap-htsat-unfused`, 512 dims, 48 kHz),
+   com **import tardio** (`EmbeddingUnavailable` + hint do extra) como em `analysis`/`dedupe`.
+   O modelo é carregado só no primeiro `embed()`, então o **dry-run não baixa pesos**.
+2. **Schema v4** — tabela `embeddings(file_id, model, model_version, dim, vector, created_at)`
+   com PK `(file_id, model, model_version)`: múltiplos modelos/versões coexistem, e reanalisar
+   com outro modelo não destrói o anterior (mesmo padrão de `audio_analysis`).
+3. **Vetores como BLOB float32 little-endian** (`struct` em `ml/vectors.py`, sem `numpy`):
+   gravar/ler embedding não pode depender do extra `ml`. A similaridade é **cosseno = produto
+   interno** sobre vetores normalizados com `l2_normalize`.
+4. **k-NN (`ml/neighbors.py`)** — referências = faixas com embedding **e** rótulo (L0/L1);
+   alvos = faixas com embedding **sem** rótulo. Voto ponderado pela similaridade dos `k`
+   vizinhos acima de `min_similarity`; a concordância da vizinhança vira `confidence` (A/B/C).
+5. **Proveniência preservada** — a proposta é gravada em `track_genres` com
+   `source = "embedding"`, **nunca** com `tags`/`rules`; a UNIQUE `(track_id, genre_id, source)`
+   garante que L0/L1 não são sobrescritos nem duplicados. `neighbors` é dry-run por padrão.
+6. **Execução em duas etapas**, como `analyze`: `build_plan` (dry-run) e `apply_plan`, com
+   `--limit`/`--force`; falhas por arquivo vão para `scan_errors` sem interromper o lote.
+7. **Config `[ml]`** (`backend`, `model`, `window_seconds`, `neighbors`, `min_similarity`) e
+   comandos `djlife embed` e `djlife neighbors`. O extra é `ml` (`pip install -e ".[ml]"`).
+
+**Consequências**
+- (+) L3 funcional e *offline* para leitura: os vetores ficam no catálogo e o k-NN roda sem
+  GPU, sem rede e sem o extra instalado;
+- (+) trocar de modelo é só implementar `Embedder` — `embeddings` já é multi-modelo;
+- (+) nenhuma label de L0/L1 é perdida: a proposta é uma linha paralela, auditável e reversível;
+- (+) o núcleo continua Python puro: `vectors.py` não importa `numpy`/`torch`;
+- (−) gerar embeddings exige `torch` + `transformers` (extra opcional `ml`) e o download dos
+  pesos na primeira execução;
+- (−) o k-NN é exaustivo (O(alvos × referências)) — adequado ao catálogo pessoal, mas não
+  escala para bibliotecas muito grandes sem índice vetorial;
+- (−) a qualidade depende do modelo e do tamanho da vizinhança; ajustar `--k`/`--min-similarity`
+  é esperado. L4 (foundation models MERT/MuQ como re-ranker) foi implementado na ADR-0017.
+
+---
+
+## ADR-0016 — Empacotamento onedir com PyInstaller (núcleo enxuto, extras on-demand)
+
+**Status:** aceita (2026-10-29)
+
+**Contexto**
+O djLife precisa rodar em máquinas de DJ sem exigir Python ou o venv de desenvolvimento. Fazer
+isso sem arrastar as dependências pesadas do projeto (CLAP = `torch` + `transformers`, ~2 GB;
+`librosa`; `essentia`) é o ponto central: inflá-las tornaria a distribuição proibitiva e ainda
+esbarraria na ausência de wheel do `essentia` no Windows (ADR-0014). Os dados embutidos
+(`schema.sql`, `genres.yaml`, `ui/assets`) são lidos em runtime via `Path(__file__).with_name(...)`,
+o que quebra num bundle se eles não forem embarcados junto do pacote.
+
+**Decisão**
+
+1. **PyInstaller onedir** via extra `packaging` (`pip install -e ".[packaging]"`) e spec versionado
+   em `packaging/djlife.spec`. Roda com `pyinstaller packaging/djlife.spec` → `dist/djlife/`.
+2. **Núcleo enxuto:** as dependências de runtime do `pyproject.toml` (`typer`, `rich`, `mutagen`,
+   `tinytag`, `pyyaml`, `platformdirs`) são o que entra no bundle.
+3. **Extras pesados em `excludes`** no spec (`torch`, `transformers`, `librosa`, `soundfile`,
+   `essentia`, `numpy`/`scipy`, `pyacoustid`, `pyrekordbox`, …): os backends continuam
+   **on-demand**, instalados no ambiente de quem usa. O import tardio já existente
+   (`AnalysisUnavailable`/`EmbeddingUnavailable`) mantém o núcleo funcionando sem eles.
+4. **Entrypoint** = `src/djlife/__main__.py` (mesmo `app()` do console script), evitando um
+   script de boot duplicado.
+5. **Dados embutidos** via `datas` com destino `djlife/…`, espelhando o layout do pacote — que é
+   exatamente onde o `_MEIPASS` do PyInstaller posiciona os módulos congelados, mantendo
+   `Path(__file__).with_name(...)` válido sem alterar o código.
+6. **FFmpeg** não entra no bundle: é pré-requisito externo apenas para os backends de áudio.
+
+**Consequências**
+- (+) distribuição portátil (~24 MB, ~32 arquivos) que roda sem Python instalado;
+- (+) núcleo permanece Python puro e as dependências pesadas seguem isoladas;
+- (+) nenhuma mudança de código de produção: só o spec e o extra de build;
+- (−) o binário **não** inclui análise/embeddings/fingerprint/Rekordbox — quem precisar dessas
+  camadas usa o ambiente Python com os extras instalados;
+- (−) `dist/`/`build/` não são versionados (já no `.gitignore`); o artefato é regerado localmente.
+
+---
+
+## ADR-0017 — Backends L4 (MERT/MuQ) como embedders plugáveis
+
+**Status:** aceita (2026-10-30)
+
+**Contexto**
+O L4 do pipeline (foundation models musicais) previa MERT/MuQ para refinar gênero/subgênero.
+Ambos são modelos **CC BY-NC** (ADR-0001) de porte médio (MERT-v1-95M ~95M; MuQ-large ~300M),
+rodam em CPU e produzem vetores por *mean pooling*. Em vez de exigir um classificador
+supervisionado treinado, eles entram com o mesmo contrato do L3 — a diferença é o **espaço de
+embedding** (768/1024 dims) e, portanto, o `model_version` gravado no catálogo.
+
+**Decisão**
+
+1. **Mesmo contrato `Embedder`** (`name`, `version`, `dim`, `embed`): `mert` e `muq` são apenas
+   novos registros em `ml/runner.py`, sem tocar no k-NN nem no schema (a PK
+   `(file_id, model, model_version)` já suporta múltiplos modelos).
+2. **`mert`** (`m-a-p/MERT-v1-95M`, 768 dims, 24 kHz) usa `Wav2Vec2FeatureExtractor` +
+   `AutoModel` com `trust_remote_code=True`; import tardio do `transformers`/`torch` (extra `ml`).
+   O vetor é a média das 13 camadas ocultas sobre os *time-steps* (`hidden_states`).
+3. **`muq`** (`OpenMuQ/MuQ-large-msd-iter`, 1024 dims, 24 kHz) usa o pacote `muq`
+   (`from muq import MuQ`); extra dedicado `muq` (`pip install -e ".[muq]"`). O vetor é a média
+   do tempo de `last_hidden_state`.
+4. **Áudio lido com `librosa` em 24 kHz mono** (mesma estratégia do CLAP, com fallback
+   `extended()` para paths longos do Windows), alimentando o *processor*/tensor de cada modelo.
+5. **`model_version` = `<model_id>@1`**; trocar de modelo cria uma linha nova em `embeddings` e
+   reanalisar com `--force` não destrói os vetores de outro backend.
+
+**Consequências**
+- (+) L4 plugável reaproveitando 100% da infraestrutura de L3 (`embed`/`neighbors`/UI);
+- (+) pesos NC isolados em extras opcionais, coerente com a porta de saída da ADR-0001;
+- (+) nenhuma mudança de schema: multi-modelo já era suportado;
+- (−) MuQ arrasta o pacote `muq` e os pesos `OpenMuQ` (CC-BY-NC 4.0, uso não comercial);
+- (−) inferência de mais de um modelo sobre o mesmo catálogo custa tempo de CPU — o `--limit`
+  do `embed` existe justamente para processar em lote.
+
+---
+
+## ADR-0018 — Integrações DJ em beta; foco no filesystem
+
+**Status:** aceita (2026-10-30)
+
+**Contexto**
+As integrações Rekordbox (ADR-0011) e Serato (ADR-0012) foram implementadas a partir de
+documentação e engenharia reversa, sem validação contra bancos reais em todos os cenários
+(versões, variantes de schema, cadeados de senha). Anunciá-las como funcionalidade estável
+criaria expectativa de suporte que não pode ser honrada. Ao mesmo tempo, o valor central do
+djLife é a **organização do filesystem**, que é auto-contida e verificável.
+
+**Decisão**
+
+1. **Rekordbox e Serato passam a ser rotulados `beta`** na CLI (`--help` e aviso em execução),
+   na UI (aba *integrações*) e na documentação. Não afirmamos funcionamento completo.
+2. **O foco de evolução é a organização no filesystem** (`plan` → `apply` → `undo`), com
+   ferramentas de apoio: `djlife export` (playlists M3U8 por gênero/subgênero) e `djlife doctor`
+   (auditoria do ambiente e da organização do catálogo).
+3. **Nada dos módulos de integração é removido**: `status`/`relink` continuam disponíveis e
+   cobertos por testes, apenas reclassificados como experimentais.
+4. **Garantias de segurança permanecem**: `relink` segue exigindo backup verificado e dry-run
+   por padrão, independentemente do status beta.
+
+**Consequências**
+- (+) expectativa alinhada: o usuário sabe que integrações podem falhar e que o caminho estável é
+  o filesystem;
+- (+) esforço concentrado onde o retorno é verificável (plan/apply/export/doctor);
+- (−) quem depende de relink automático não tem garantia de suporte — mitigado por `doctor`, que
+  diagnostica o ambiente (extras, `ffmpeg`, WAL/FK, raízes) antes de tentar;
+- (−) a promoção de beta para estável exigirá validação com bancos reais — fica como pendência
+  futura, não bloqueante.
+
+---
+
+## ADR-0019 — Curadoria humana: decisão `manual` tem precedência
+
+**Status:** aceita (2026-10-30)
+
+**Contexto**
+As camadas automáticas gravam gênero em `track_genres` com proveniência distinta (`tags` L0,
+`rules` L1, `embedding` L3/L4). Em parte da biblioteca as fontes **discordam**: uma tag antiga
+aponta para um gênero que não corresponde ao áudio, uma regra de regex acerta o artista mas
+erra o estilo, ou o k-NN aproxima faixas limítrofes. Escolher automaticamente entre fontes
+conflitantes erra em casos que só a **escuta humana** resolve — e, como o `apply` projeta o
+filesystem a partir do gênero, um erro de classificação vira um arquivo na pasta errada.
+
+**Decisão**
+
+1. **Detectar e separar os conflitos.** A fonte de conflito é a **divergência entre fontes**
+   (não entre rótulos de uma mesma fonte). O nível é `divergente` quando as raízes de gênero
+   diferem e `ambígua` quando compartilham a raiz mas divergem no subgênero; faixas `divergente`
+   vêm primeiro na fila.
+2. **Revisão humana via CLI interativa** (`djlife review`), sem dependência nova (só stdlib +
+   Rich). O prompt mostra os sinais por fonte + uma sugestão, permite **abrir a faixa no player
+   do sistema** (`--open`), além de escolher, pular, manter o rótulo atual ou sair.
+3. **A decisão do usuário vence.** A escolha é gravada em `track_genres` com
+   `source = 'manual'` (confiança `A`). O `planner` passa a ordenar as fontes por
+   `SOURCE_ORDER = {manual: 0, tags: 1, rules: 2, embedding: 3}`, então a decisão manual é a
+   **classificação primária** em `plan`/`export`/`report` — sem apagar as demais linhas
+   (auditáveis).
+4. **Idempotência e não-destrutividade.** Regravar a mesma decisão é `ON CONFLICT DO NOTHING`;
+   faixas já revisadas (`source = 'manual'`) saem da fila. A curadoria **não** toca o filesystem.
+
+**Consequências**
+- (+) a informação incoerente é isolada e resolvida com o julgamento que falta às fontes
+  automáticas, evitando arquivos em pastas erradas;
+- (+) precedência explícita e reversível: a decisão manual é uma linha a mais, distinta das
+  automáticas, sem removê-las;
+- (+) nada de dependência nova no núcleo (stdlib + Rich), mantendo o empacotamento enxuto;
+- (−) exige trabalho humano proporcional ao volume de conflitos — mitigado pela fila ordenada
+  (mais graves primeiro), pelo `--limit` e por `--list`, que permitem revisar em lotes;
+- (−) `SOURCE_ORDER` passa a ser parte do contrato de classificação: novas fontes precisam se
+  posicionar nele.
+

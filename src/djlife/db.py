@@ -6,7 +6,7 @@ from pathlib import Path
 from platformdirs import user_data_dir
 
 APP_NAME = "djlife"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def default_db_path() -> Path:
@@ -42,9 +42,7 @@ def initialize(conn: sqlite3.Connection) -> int:
         " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (str(SCHEMA_VERSION),),
     )
-    conn.execute(
-        "INSERT OR IGNORE INTO meta(key, value) VALUES ('taxonomy_version', '0.0.0')"
-    )
+    conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('taxonomy_version', '0.0.0')")
     conn.commit()
     return schema_version(conn)
 

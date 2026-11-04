@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
+from rich.progress import Progress
 from rich.table import Table
 
 from djlife import (
     __version__,
     classifier,
+    curation,
     db,
     dedupe,
+    doctor,
     planner,
+    playlists,
     quarantine,
     report,
     scanner,
@@ -23,6 +30,14 @@ from djlife import (
 )
 from djlife import apply as apply_mod
 from djlife import config as config_mod
+from djlife.analysis.base import AnalysisUnavailable
+from djlife.analysis.runner import (
+    AnalyzePlan,
+    AnalyzeResult,
+    apply_plan,
+    build_plan,
+    load_analyzer,
+)
 from djlife.integrations import base as integrations_base
 from djlife.integrations import rekordbox as rekordbox_int
 from djlife.integrations import serato as serato_int
@@ -35,6 +50,18 @@ from djlife.integrations.base import (
     relink_plan,
     resolve_move_mapping,
 )
+from djlife.ml.base import EmbeddingUnavailable
+from djlife.ml.neighbors import (
+    NeighborPlan,
+    NeighborResult,
+)
+from djlife.ml.neighbors import (
+    apply_plan as apply_neighbor_plan,
+)
+from djlife.ml.neighbors import build_plan as build_neighbor_plan
+from djlife.ml.runner import EmbedPlan, EmbedResult, embedder_version, load_embedder
+from djlife.ml.runner import apply_plan as apply_embed_plan
+from djlife.ml.runner import build_plan as build_embed_plan
 from djlife.ui import server as ui_server
 
 app = typer.Typer(
@@ -74,15 +101,13 @@ def scan(
         list[Path] | None,
         typer.Argument(help="Raizes a varrer (padrao: library.roots da config)."),
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
     no_hash: Annotated[
         bool, typer.Option("--no-hash", help="Nao calcular hash de conteudo.")
     ] = False,
-    skip_tags: Annotated[
-        bool, typer.Option("--skip-tags", help="Nao ler metadados.")
-    ] = False,
+    skip_tags: Annotated[bool, typer.Option("--skip-tags", help="Nao ler metadados.")] = False,
 ) -> None:
     """Varre as raizes, atualiza o catalogo e indexa metadados."""
     cfg = config_mod.load_config(config)
@@ -138,9 +163,9 @@ def scan(
 
 @app.command()
 def classify(
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Resolve genero em camadas (tags e regras) e grava track_genres."""
     cfg, conn = _open_catalog(config)
@@ -192,9 +217,9 @@ def _open_catalog(config: Path) -> tuple[config_mod.Config, sqlite3.Connection]:
 
 @app.command()
 def stats(
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Mostra estatisticas do catalogo (arquivos, cobertura de tags, duracao)."""
     _, conn = _open_catalog(config)
@@ -237,9 +262,9 @@ def search(
         str, typer.Argument(help="Termo buscado em titulo, artista, album ou caminho.")
     ],
     limit: Annotated[int, typer.Option("--limit", "-n", help="Maximo de resultados.")] = 50,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Busca faixas no catalogo por texto."""
     _, conn = _open_catalog(config)
@@ -273,9 +298,9 @@ def report_cmd(
     fmt: Annotated[
         str | None, typer.Option("--format", "-f", help="Formato (csv/json); padrao pela extensao.")
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Exporta o catalogo para CSV ou JSON."""
     _, conn = _open_catalog(config)
@@ -290,6 +315,83 @@ def report_cmd(
 
 
 app.command(name="report")(report_cmd)
+
+
+def _print_export_plan(built: playlists.ExportPlan, preview: int) -> None:
+    summary = Table(title=f"Export - {built.group_by} -> {built.out_dir}")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Playlists", str(len(built.playlists)))
+    summary.add_row("Faixas", str(built.total))
+    console.print(summary)
+
+    if preview > 0 and built.playlists:
+        shown = built.playlists[:preview]
+        table = Table(title=f"Playlists ({len(shown)} de {len(built.playlists)})")
+        table.add_column("Playlist")
+        table.add_column("Faixas", justify="right")
+        for playlist in shown:
+            table.add_row(str(playlist.relative), str(len(playlist.tracks)))
+        console.print(table)
+
+
+def _print_export_result(result: playlists.ExportResult) -> None:
+    summary = Table(title=f"Export - {result.out_dir}")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Playlists gravadas", str(result.playlists))
+    summary.add_row("Faixas", str(result.tracks))
+    summary.add_row("Erros", str(result.errors))
+    console.print(summary)
+
+
+@app.command()
+def export(
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Diretorio de saida das playlists.")
+    ] = None,
+    by: Annotated[
+        str, typer.Option("--by", help="Agrupar por genre ou subgenre (padrao: genre).")
+    ] = "genre",
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Grava os arquivos .m3u8 em disco.")
+    ] = False,
+    preview: Annotated[
+        int, typer.Option("--preview", "-n", help="Playlists exibidas na previa.")
+    ] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Gera playlists M3U8 por genero/subgenero a partir do catalogo (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    destination = out
+    if destination is None:
+        if cfg.files.target is None:
+            conn.close()
+            console.print("[red]Defina files.target na config ou use --out.[/red]")
+            raise typer.Exit(code=1)
+        destination = Path(cfg.files.target) / "_playlists"
+
+    try:
+        built = playlists.build_plan(
+            conn, out_dir=destination, group_by=by, unknown_dir=cfg.files.unknown_dir
+        )
+    except ValueError as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    conn.close()
+
+    _print_export_plan(built, preview)
+    if not apply:
+        return
+    if not built.playlists:
+        console.print("[yellow]Nada a exportar.[/yellow]")
+        return
+
+    result = playlists.write(built)
+    _print_export_result(result)
 
 
 def _resolve_target(cfg: config_mod.Config, override: Path | None) -> Path:
@@ -348,12 +450,10 @@ def plan(
     strategy: Annotated[
         str | None, typer.Option("--strategy", "-s", help="hardlink, move ou tag_only.")
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")
-    ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Mostra o plano de organizacao (dry-run), sem tocar no filesystem."""
     cfg, conn = _open_catalog(config)
@@ -371,24 +471,18 @@ def plan(
 
 
 def apply_cmd(
-    yes: Annotated[
-        bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")
-    ] = False,
-    no_tags: Annotated[
-        bool, typer.Option("--no-tags", help="Nao gravar tags DJLIFE_*.")
-    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")] = False,
+    no_tags: Annotated[bool, typer.Option("--no-tags", help="Nao gravar tags DJLIFE_*.")] = False,
     target: Annotated[
         Path | None, typer.Option("--target", "-t", help="Diretorio de destino.")
     ] = None,
     strategy: Annotated[
         str | None, typer.Option("--strategy", "-s", help="hardlink, move ou tag_only.")
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")
-    ] = 0,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")] = 0,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Executa o plano (hardlink/move + tags DJLIFE_* + journal)."""
     cfg, conn = _open_catalog(config)
@@ -436,9 +530,9 @@ def undo(
     batch: Annotated[
         str | None, typer.Option("--batch", "-b", help="Lote a reverter (padrao: ultimo).")
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Reverte um apply usando o journal."""
     cfg, conn = _open_catalog(config)
@@ -472,9 +566,9 @@ def duplicates(
     preview: Annotated[
         int, typer.Option("--preview", "-n", help="Grupos exibidos na previa.")
     ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Detecta duplicatas em 3 niveis: hash -> fingerprint -> ISRC/MBID."""
     _, conn = _open_catalog(config)
@@ -513,9 +607,9 @@ def duplicates(
 
 
 def versions_cmd(
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Classifica versoes (Original/Extended/Radio/Remix/Bootleg) por regras."""
     _, conn = _open_catalog(config)
@@ -534,23 +628,315 @@ def versions_cmd(
 app.command(name="versions")(versions_cmd)
 
 
+def _print_analyze_plan(plan: AnalyzePlan, preview: int) -> None:
+    summary = Table(title=f"Analyze - {plan.analyzer} ({plan.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Arquivos", str(plan.files))
+    summary.add_row("Ja analisados", str(plan.analyzed))
+    summary.add_row("Pendentes", str(plan.pending))
+    console.print(summary)
+
+    if preview > 0 and plan.candidates:
+        shown = plan.candidates[:preview]
+        table = Table(title=f"Previa ({len(shown)} de {plan.pending})")
+        table.add_column("Arquivo")
+        for candidate in shown:
+            table.add_row(candidate.path)
+        console.print(table)
+
+
+def _print_analyze_result(result: AnalyzeResult) -> None:
+    summary = Table(title=f"Analyze - {result.analyzer} ({result.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Analisados", str(result.analyzed))
+    summary.add_row("Falhas", str(result.failed))
+    console.print(summary)
+
+    if result.errors:
+        table = Table(title=f"Falhas ({min(len(result.errors), 10)} de {len(result.errors)})")
+        table.add_column("Arquivo")
+        table.add_column("Motivo")
+        for path, message in result.errors[:10]:
+            table.add_row(path, message)
+        console.print(table)
+        console.print("[dim]Falhas registradas em scan_errors.[/dim]")
+
+
+@app.command()
+def analyze(
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", "-b", help="librosa ou essentia (padrao: analysis.backend)."),
+    ] = None,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Executa a analise e grava em audio_analysis.")
+    ] = False,
+    fast: Annotated[
+        bool, typer.Option("--fast", help="Analisa so o inicio da faixa (triagem rapida).")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Reanalisa arquivos ja analisados.")
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Maximo de arquivos analisados.")
+    ] = None,
+    preview: Annotated[int, typer.Option("--preview", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Extrai BPM e tonalidade (Camelot/Open Key) para audio_analysis (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    name = backend or cfg.analysis.backend
+    try:
+        analyzer = load_analyzer(
+            name, fast=fast or cfg.analysis.fast, fast_seconds=cfg.analysis.fast_seconds
+        )
+    except (AnalysisUnavailable, ValueError) as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    plan = build_plan(conn, analyzer, limit=limit, force=force)
+    _print_analyze_plan(plan, preview)
+    if not apply:
+        conn.close()
+        return
+    if plan.pending == 0:
+        conn.close()
+        console.print("[yellow]Nada a analisar.[/yellow]")
+        return
+
+    with Progress(console=console) as progress:
+        task_id = progress.add_task(f"Analisando com {analyzer.name}", total=plan.pending)
+
+        def tick(index: int, total: int, path: str) -> None:
+            progress.update(task_id, advance=1, description=f"{index}/{total} {Path(path).name}")
+
+        result = apply_plan(conn, plan, analyzer, on_progress=tick)
+
+    conn.close()
+    _print_analyze_result(result)
+
+
+def _print_embed_plan(plan: EmbedPlan, preview: int) -> None:
+    summary = Table(title=f"Embed - {plan.embedder} ({plan.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Arquivos", str(plan.files))
+    summary.add_row("Ja embeddados", str(plan.embedded))
+    summary.add_row("Pendentes", str(plan.pending))
+    console.print(summary)
+
+    if preview > 0 and plan.candidates:
+        shown = plan.candidates[:preview]
+        table = Table(title=f"Previa ({len(shown)} de {plan.pending})")
+        table.add_column("Arquivo")
+        for candidate in shown:
+            table.add_row(candidate.path)
+        console.print(table)
+
+
+def _print_embed_result(result: EmbedResult) -> None:
+    summary = Table(title=f"Embed - {result.embedder} ({result.version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Embeddados", str(result.embedded))
+    summary.add_row("Falhas", str(result.failed))
+    console.print(summary)
+
+    if result.errors:
+        table = Table(title=f"Falhas ({min(len(result.errors), 10)} de {len(result.errors)})")
+        table.add_column("Arquivo")
+        table.add_column("Motivo")
+        for path, message in result.errors[:10]:
+            table.add_row(path, message)
+        console.print(table)
+        console.print("[dim]Falhas registradas em scan_errors.[/dim]")
+
+
+@app.command()
+def embed(
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", "-b", help="clap, mert ou muq (padrao: ml.backend)."),
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="ID do modelo (padrao: ml.model).")
+    ] = None,
+    window: Annotated[
+        float | None,
+        typer.Option("--window", help="Segundos de audio usados (padrao: ml.window_seconds)."),
+    ] = None,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Calcula os embeddings e grava em embeddings.")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Recalcula arquivos ja embeddados.")
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Maximo de arquivos processados.")
+    ] = None,
+    preview: Annotated[int, typer.Option("--preview", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Calcula embeddings de audio (camada L3/L4) para o catalogo (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    name = backend or cfg.ml.backend
+    chosen_model = model or cfg.ml.model
+    window_seconds = window if window is not None else cfg.ml.window_seconds
+    try:
+        version = embedder_version(name, chosen_model)
+    except ValueError as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    plan = build_embed_plan(conn, name, version, limit=limit, force=force)
+    _print_embed_plan(plan, preview)
+    if not apply:
+        conn.close()
+        return
+    if plan.pending == 0:
+        conn.close()
+        console.print("[yellow]Nada a embeddar.[/yellow]")
+        return
+
+    try:
+        embedder = load_embedder(name, model=chosen_model, window_seconds=window_seconds)
+    except (EmbeddingUnavailable, ValueError) as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    with Progress(console=console) as progress:
+        task_id = progress.add_task(f"Embeddando com {embedder.name}", total=plan.pending)
+
+        def tick(index: int, total: int, path: str) -> None:
+            progress.update(task_id, advance=1, description=f"{index}/{total} {Path(path).name}")
+
+        result = apply_embed_plan(conn, plan, embedder, on_progress=tick)
+
+    conn.close()
+    _print_embed_result(result)
+
+
+def _print_neighbor_plan(plan: NeighborPlan, preview: int) -> None:
+    summary = Table(title=f"Neighbors - {plan.model} ({plan.model_version})")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Embeddados", str(plan.embedded))
+    summary.add_row("Rotulados (ref)", str(plan.labeled))
+    summary.add_row("Alvos", str(plan.targets))
+    summary.add_row("Propostas", str(plan.pending))
+    console.print(summary)
+
+    if preview > 0 and plan.proposals:
+        shown = plan.proposals[:preview]
+        table = Table(title=f"Propostas ({len(shown)} de {plan.pending})")
+        table.add_column("Faixa", justify="right")
+        table.add_column("Genero")
+        table.add_column("Confianca")
+        table.add_column("Score", justify="right")
+        table.add_column("Vizinhos", justify="right")
+        for proposal in shown:
+            table.add_row(
+                str(proposal.track_id),
+                proposal.genre,
+                proposal.confidence,
+                f"{proposal.score:.2f}",
+                str(proposal.neighbors),
+            )
+        console.print(table)
+
+
+def _print_neighbor_result(result: NeighborResult) -> None:
+    summary = Table(title="Neighbors")
+    summary.add_column("Metrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Propostas gravadas", str(result.written))
+    summary.add_row("Ignoradas (ja existiam)", str(result.skipped))
+    console.print(summary)
+
+
+@app.command()
+def neighbors(
+    k: Annotated[
+        int | None, typer.Option("--k", help="Vizinhos por faixa (padrao: ml.neighbors).")
+    ] = None,
+    min_similarity: Annotated[
+        float | None,
+        typer.Option("--min-similarity", help="Similaridade minima (padrao: ml.min_similarity)."),
+    ] = None,
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", "-b", help="clap, mert ou muq (padrao: ml.backend)."),
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="ID do modelo (padrao: ml.model).")
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Grava as propostas em track_genres (source=embedding)."),
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Maximo de faixas alvo.")
+    ] = None,
+    preview: Annotated[int, typer.Option("--preview", help="Propostas exibidas na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Propoe genero por k-NN sobre embeddings para faixas sem rotulo (dry-run por padrao)."""
+    cfg, conn = _open_catalog(config)
+    name = backend or cfg.ml.backend
+    chosen_model = model or cfg.ml.model
+    try:
+        version = embedder_version(name, chosen_model)
+    except ValueError as exc:
+        conn.close()
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    plan = build_neighbor_plan(
+        conn,
+        name,
+        version,
+        k=k if k is not None else cfg.ml.neighbors,
+        min_similarity=min_similarity if min_similarity is not None else cfg.ml.min_similarity,
+        limit=limit,
+    )
+    _print_neighbor_plan(plan, preview)
+    if not apply:
+        conn.close()
+        return
+    if plan.pending == 0:
+        conn.close()
+        console.print("[yellow]Nenhuma proposta nova.[/yellow]")
+        return
+
+    result = apply_neighbor_plan(conn, plan)
+    conn.close()
+    _print_neighbor_result(result)
+
+
 def dedupe_cmd(
     apply: Annotated[
         bool, typer.Option("--apply", help="Executa a quarentena (move os redundantes).")
     ] = False,
-    yes: Annotated[
-        bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")
-    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Nao pedir confirmacao.")] = False,
     destination: Annotated[
         Path | None,
         typer.Option("--quarantine", "-q", help="Diretorio de quarentena."),
     ] = None,
-    preview: Annotated[
-        int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")
-    ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    preview: Annotated[int, typer.Option("--preview", "-n", help="Itens exibidos na previa.")] = 20,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Planeja (dry-run) a quarentena de duplicatas, movendo sem deletar."""
     cfg, conn = _open_catalog(config)
@@ -639,14 +1025,18 @@ def status(
     software: Annotated[
         str | None, typer.Option("--software", "-s", help="rekordbox ou serato (padrao: ambos).")
     ] = None,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
-    """Verifica a integridade dos bancos DJ (itens que resolvem para arquivos existentes)."""
+    """Verifica a integridade dos bancos DJ (BETA: itens que resolvem para arquivos)."""
     cfg = config_mod.load_config(config)
+    console.print(
+        "[dim]Integracoes Rekordbox/Serato estao em [bold]beta[/bold]:"
+        " o funcionamento nao e garantido.[/dim]"
+    )
 
-    table = Table(title="Integridade das bibliotecas DJ")
+    table = Table(title="Integridade das bibliotecas DJ (beta)")
     table.add_column("Software")
     table.add_column("Itens", justify="right")
     table.add_column("Resolvidos", justify="right")
@@ -720,12 +1110,16 @@ def relink(
     preview: Annotated[
         int, typer.Option("--preview", "-n", help="Ajustes exibidos na previa.")
     ] = 20,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
-    """Aponta os bancos DJ para os destinos atuais do catalogo (dry-run por padrao)."""
+    """Aponta os bancos DJ para os destinos atuais do catalogo (BETA, dry-run por padrao)."""
     cfg, conn = _open_catalog(config)
+    console.print(
+        "[dim]Integracoes Rekordbox/Serato estao em [bold]beta[/bold]:"
+        " o funcionamento nao e garantido.[/dim]"
+    )
     try:
         mapping = resolve_move_mapping(conn)
     finally:
@@ -782,6 +1176,221 @@ def relink(
         raise typer.Exit(code=1)
 
 
+_DOCTOR_TONE = {
+    "ok": "[green]ok[/green]",
+    "warn": "[yellow]warn[/yellow]",
+    "fail": "[red]fail[/red]",
+}
+
+
+def doctor_cmd(
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Audita o ambiente e a organizacao do catalogo (somente leitura)."""
+    cfg = config_mod.load_config(config)
+    checks = doctor.run(cfg)
+
+    table = Table(title="Doctor")
+    table.add_column("Verificacao")
+    table.add_column("Estado")
+    table.add_column("Detalhe")
+    for check in checks:
+        tone = _DOCTOR_TONE.get(check.status, check.status)
+        table.add_row(escape(check.name), tone, escape(check.detail))
+    console.print(table)
+
+    if any(check.status == doctor.FAIL for check in checks):
+        raise typer.Exit(code=1)
+
+
+app.command(name="doctor")(doctor_cmd)
+
+
+_LEVEL_TONE = {
+    curation.LEVEL_DIVERGENTE: "[red]divergente[/red]",
+    curation.LEVEL_AMBIGUA: "[yellow]ambigua[/yellow]",
+}
+
+
+def _open_path(path: str) -> None:
+    """Abre o arquivo no aplicativo padrao do sistema (best-effort)."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        elif sys.platform.startswith("win"):
+            subprocess.Popen(["cmd", "/c", "start", "", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except OSError as exc:
+        console.print(f"  [red]Nao foi possivel abrir: {exc}[/red]")
+
+
+def _search_choices(choices: list[curation.Choice], needle: str) -> list[curation.Choice]:
+    return [
+        choice
+        for choice in choices
+        if needle in choice.label.casefold() or needle in choice.slug.casefold()
+    ]
+
+
+def _print_choices(choices: list[curation.Choice]) -> None:
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Genero")
+    for index, choice in enumerate(choices, start=1):
+        table.add_row(str(index), f"{escape(choice.label)} [dim]({escape(choice.slug)})[/dim]")
+    console.print(table)
+
+
+def _print_review_item(item: curation.ReviewItem) -> None:
+    title = item.title or Path(item.path).stem
+    console.print(f"[bold]{escape(item.artist or '')}[/bold] - {escape(title)}")
+    console.print(f"[dim]{escape(item.path)}[/dim]")
+    for signal in item.signals:
+        console.print(
+            f"  {signal.source:<9} {escape(signal.label)} [dim]({signal.confidence})[/dim]"
+        )
+    suggestion = escape(item.suggestion.label)
+    console.print(f"  [yellow]{item.level}[/yellow] -> sugestao: [bold]{suggestion}[/bold]")
+
+
+def _print_review_queue(items: list[curation.ReviewItem], preview: int = 20) -> None:
+    if not items:
+        console.print("[green]Nenhum conflito de genero entre as fontes.[/green]")
+        return
+    table = Table(title=f"Curadoria - {len(items)} faixa(s) com conflito")
+    table.add_column("#", justify="right")
+    table.add_column("Faixa")
+    table.add_column("Sinais")
+    table.add_column("Nivel")
+    for index, item in enumerate(items[:preview], start=1):
+        signals = "\n".join(
+            f"{signal.source}: {signal.label} ({signal.confidence})" for signal in item.signals
+        )
+        label = f"{item.artist or '-'} - {item.title or Path(item.path).stem}"
+        table.add_row(
+            str(index), escape(label), escape(signals), _LEVEL_TONE.get(item.level, item.level)
+        )
+    console.print(table)
+    if len(items) > preview:
+        console.print(f"[dim]... e mais {len(items) - preview} faixa(s); use --limit.[/dim]")
+
+
+def _apply_choice(
+    conn: sqlite3.Connection, item: curation.ReviewItem, genre_id: int, label: str
+) -> str:
+    curation.record_decision(conn, item.track_id, genre_id)
+    console.print(f"  [green]ok[/green] -> {escape(label)}")
+    return "assigned"
+
+
+def _decide(
+    conn: sqlite3.Connection, item: curation.ReviewItem, choices: list[curation.Choice]
+) -> str:
+    shown: list[curation.Choice] = []
+    while True:
+        answer = typer.prompt(
+            "[Enter]=sugestao  [p] abrir  [s] pular  [k] manter  [q] sair  |  numero ou busca",
+            default="",
+            show_default=False,
+        ).strip()
+        low = answer.lower()
+        if low == "q":
+            return "quit"
+        if low == "s":
+            return "skipped"
+        if low == "p":
+            _open_path(item.path)
+            continue
+        if low in ("", "k"):
+            suggestion = item.suggestion
+            return _apply_choice(conn, item, suggestion.genre_id, suggestion.label)
+        if answer.isdigit():
+            position = int(answer)
+            if 1 <= position <= len(shown):
+                chosen = shown[position - 1]
+                return _apply_choice(conn, item, chosen.genre_id, chosen.label)
+            console.print("  [red]Numero fora da lista exibida.[/red]")
+            continue
+        matches = _search_choices(choices, low)
+        if not matches:
+            console.print("  [red]Nenhum genero corresponde; tente outro termo.[/red]")
+            continue
+        if len(matches) == 1:
+            return _apply_choice(conn, item, matches[0].genre_id, matches[0].label)
+        shown = matches
+        _print_choices(shown)
+        continue
+
+
+def _run_review(
+    conn: sqlite3.Connection,
+    items: list[curation.ReviewItem],
+    choices: list[curation.Choice],
+    *,
+    open_audio: bool,
+) -> None:
+    total = len(items)
+    decided = 0
+    skipped = 0
+    for index, item in enumerate(items, start=1):
+        console.rule(f"[bold cyan]{index}/{total}[/bold cyan]")
+        _print_review_item(item)
+        if open_audio:
+            _open_path(item.path)
+        try:
+            outcome = _decide(conn, item, choices)
+        except (KeyboardInterrupt, typer.Abort):
+            console.print()
+            break
+        if outcome == "quit":
+            break
+        if outcome == "assigned":
+            decided += 1
+        else:
+            skipped += 1
+    console.print(
+        f"[green]Decisoes gravadas:[/green] {decided} | [dim]sem decisao:[/dim] {skipped}"
+    )
+
+
+@app.command()
+def review(
+    list_only: Annotated[
+        bool, typer.Option("--list", help="Somente lista a fila de conflitos, sem revisar.")
+    ] = False,
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", help="Revisa no maximo N faixas (0 = todas).")
+    ] = 0,
+    open_audio: Annotated[
+        bool, typer.Option("--open", help="Abre cada faixa no player padrao ao revisar.")
+    ] = False,
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
+) -> None:
+    """Revisa manualmente as faixas cujo genero diverge entre as fontes (tags/regras/embeddings)."""
+    _, conn = _open_catalog(config)
+    try:
+        items = curation.build_queue(conn)
+        if limit > 0:
+            items = items[:limit]
+        _print_review_queue(items)
+        if list_only or not items:
+            return
+        choices = curation.genre_choices(conn)
+        if not choices:
+            console.print(
+                "[yellow]Taxonomia vazia; rode `djlife scan` para carregar os generos.[/yellow]"
+            )
+            return
+        _run_review(conn, items, choices, open_audio=open_audio)
+    finally:
+        conn.close()
+
+
 @app.command()
 def ui(
     port: Annotated[
@@ -791,9 +1400,9 @@ def ui(
     no_open: Annotated[
         bool, typer.Option("--no-open", help="Nao abrir o navegador automaticamente.")
     ] = False,
-    config: Annotated[
-        Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")
-    ] = Path("djlife.toml"),
+    config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
+        "djlife.toml"
+    ),
 ) -> None:
     """Sobe a interface web local (cyberpunk) para explorar o catalogo."""
     cfg = config_mod.load_config(config)

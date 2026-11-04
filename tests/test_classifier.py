@@ -47,9 +47,7 @@ def _insert_track(conn, file_id, title="T", artist="A", album=None, duration=100
 
 
 def _insert_tag(conn, file_id, key, value):
-    conn.execute(
-        "INSERT INTO tags(file_id, key, value) VALUES (?, ?, ?)", (file_id, key, value)
-    )
+    conn.execute("INSERT INTO tags(file_id, key, value) VALUES (?, ?, ?)", (file_id, key, value))
 
 
 @pytest.fixture

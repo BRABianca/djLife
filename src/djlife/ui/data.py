@@ -31,20 +31,23 @@ PIPELINE: tuple[dict[str, str], ...] = (
     {
         "layer": "L2",
         "name": "DSP + classificador",
-        "status": "planejado",
-        "detail": "Features de audio (BPM, tonalidade, energia) com modelo supervisionado.",
+        "status": "parcial",
+        "detail": "BPM e tonalidade (Camelot/Open Key) extraidos de audio com librosa"
+        " (Essentia como backend opcional); o classificador supervisionado vem depois.",
     },
     {
         "layer": "L3",
         "name": "Embeddings CLAP",
-        "status": "planejado",
-        "detail": "Similaridade semantica de audio para casos ambiguos.",
+        "status": "parcial",
+        "detail": "Vetores de audio (CLAP) gravados em embeddings e k-NN que propoe genero"
+        " para faixas sem rotulo (source=embedding).",
     },
     {
         "layer": "L4",
         "name": "Foundation models",
-        "status": "planejado",
-        "detail": "Modelos musicais dedicados para genero/subgenero refinados.",
+        "status": "parcial",
+        "detail": "MERT (extra `ml`) e MuQ (extra `muq`) como embedders alternativos do L3,"
+        " refinando genero/subgenero por similaridade acustica.",
     },
 )
 
@@ -63,6 +66,13 @@ COMMANDS: tuple[dict[str, str], ...] = (
         "detail": "Cada decisao guarda a camada de origem e a confianca (A/B/C).",
     },
     {
+        "name": "review",
+        "usage": "djlife review [--list] [--limit N] [--open]",
+        "summary": "Revisa manualmente as faixas cujo genero diverge entre as fontes.",
+        "detail": "Fila interativa dos conflitos entre tags/regras/embeddings; a decisao do"
+        " usuario vira source=manual e passa a valer sobre as fontes automaticas (plan/export).",
+    },
+    {
         "name": "stats",
         "usage": "djlife stats",
         "summary": "Mostra estatisticas do catalogo e cobertura de tags.",
@@ -74,6 +84,13 @@ COMMANDS: tuple[dict[str, str], ...] = (
         "usage": "djlife search TERMO [--limit N]",
         "summary": "Busca faixas por titulo, artista, album ou caminho.",
         "detail": "Consulta textual direta no catalogo SQLite.",
+    },
+    {
+        "name": "export",
+        "usage": "djlife export [--out DIR] [--by genre|subgenre] [--apply]",
+        "summary": "Gera playlists M3U8 por genero/subgenero a partir do catalogo.",
+        "detail": "Dry-run por padrao; com --apply grava os .m3u8 (caminhos relativos a playlist)"
+        " em _playlists no destino.",
     },
     {
         "name": "plan",
@@ -106,6 +123,27 @@ COMMANDS: tuple[dict[str, str], ...] = (
         "detail": "Grava o resultado em file_versions com confianca.",
     },
     {
+        "name": "analyze",
+        "usage": "djlife analyze [--apply] [--fast] [--backend NOME]",
+        "summary": "Extrai BPM e tonalidade (Camelot/Open Key) dos arquivos.",
+        "detail": "Backend librosa roda nativo no Windows; Essentia fica como extra opcional."
+        " Falhas de decodificacao vao para scan_errors.",
+    },
+    {
+        "name": "embed",
+        "usage": "djlife embed [--apply] [--force] [--limit N] [--model ID]",
+        "summary": "Calcula embeddings de audio (CLAP) e grava em embeddings.",
+        "detail": "Dry-run por padrao; o modelo roda em CPU e so e carregado com --apply"
+        " (extra opcional `ml`).",
+    },
+    {
+        "name": "neighbors",
+        "usage": "djlife neighbors [--apply] [--k N] [--min-similarity F]",
+        "summary": "Propoe genero por k-NN sobre embeddings para faixas sem rotulo.",
+        "detail": "Grava em track_genres com source=embedding, sem sobrescrever tags/regras"
+        " e com confianca pela concordancia da vizinhanca.",
+    },
+    {
         "name": "dedupe",
         "usage": "djlife dedupe [--apply --yes] [--quarantine DIR]",
         "summary": "Planeja a quarentena de duplicatas, movendo sem deletar.",
@@ -114,14 +152,23 @@ COMMANDS: tuple[dict[str, str], ...] = (
     {
         "name": "status",
         "usage": "djlife status [--software rekordbox|serato]",
-        "summary": "Verifica a integridade dos bancos DJ (itens que resolvem para arquivos).",
-        "detail": "Mostra itens totais, resolvidos e ausentes por software.",
+        "summary": "Verifica a integridade dos bancos DJ (BETA: itens que resolvem para arquivos).",
+        "detail": "Integracoes Rekordbox/Serato estao em beta: o funcionamento nao e garantido."
+        " Mostra itens totais, resolvidos e ausentes por software.",
     },
     {
         "name": "relink",
         "usage": "djlife relink [--software NOME] [--apply --yes]",
-        "summary": "Aponta os bancos DJ para os destinos atuais do catalogo.",
-        "detail": "Dry-run por padrao; com --apply cria backup verificado antes de gravar.",
+        "summary": "Aponta os bancos DJ para os destinos atuais (BETA).",
+        "detail": "Beta: nao ha garantia de funcionamento. Dry-run por padrao; com --apply cria"
+        " backup verificado antes de gravar.",
+    },
+    {
+        "name": "doctor",
+        "usage": "djlife doctor",
+        "summary": "Audita o ambiente e a organizacao do catalogo (somente leitura).",
+        "detail": "Checa schema/PRAGMAs/integridade do SQLite, raizes, files.target, extras"
+        " opcionais e binarios externos; nada e escrito.",
     },
     {
         "name": "ui",
@@ -195,6 +242,32 @@ def overview(cfg: Config) -> dict[str, Any]:
         genres_active = _scalar(conn, "SELECT COUNT(*) FROM genres WHERE is_active = 1")
         classified = _scalar(conn, "SELECT COUNT(DISTINCT track_id) FROM track_genres")
         fingerprints = _scalar(conn, "SELECT COUNT(*) FROM fingerprints")
+        analyzed = _scalar(conn, "SELECT COUNT(DISTINCT file_id) FROM audio_analysis")
+        backends = [
+            {
+                "analyzer": str(row["analyzer"]),
+                "version": str(row["analysis_version"]),
+                "total": int(row["total"]),
+            }
+            for row in conn.execute(
+                "SELECT analyzer, analysis_version, COUNT(*) AS total FROM audio_analysis"
+                " GROUP BY analyzer, analysis_version ORDER BY analyzer, analysis_version"
+            )
+        ]
+        embedded = _scalar(conn, "SELECT COUNT(DISTINCT file_id) FROM embeddings")
+        models = [
+            {
+                "model": str(row["model"]),
+                "version": str(row["model_version"]),
+                "dim": int(row["dim"]),
+                "total": int(row["total"]),
+            }
+            for row in conn.execute(
+                "SELECT model, model_version, dim, COUNT(*) AS total FROM embeddings"
+                " GROUP BY model, model_version, dim ORDER BY model, model_version"
+            )
+        ]
+        proposed = _scalar(conn, "SELECT COUNT(*) FROM track_genres WHERE source = 'embedding'")
         batches = _scalar(conn, "SELECT COUNT(DISTINCT batch) FROM journal")
         dup_groups = [
             {"kind": str(row["kind"]), "total": int(row["total"])}
@@ -244,6 +317,8 @@ def overview(cfg: Config) -> dict[str, Any]:
         },
         "duplicates": {"groups": dup_groups, "total": sum(g["total"] for g in dup_groups)},
         "versions": {"counts": versions},
+        "analysis": {"files": analyzed, "backends": backends},
+        "embeddings": {"files": embedded, "models": models, "proposed": proposed},
         "fingerprints": fingerprints,
         "apply": {"batches": batches},
     }
@@ -332,7 +407,7 @@ def versions(cfg: Config, limit: int = 50) -> dict[str, Any]:
 
 
 def integrations(cfg: Config) -> dict[str, Any]:
-    """Integridade dos bancos DJ configurados (Rekordbox/Serato)."""
+    """Integridade dos bancos DJ configurados (Rekordbox/Serato, em beta)."""
     reports: list[dict[str, Any]] = []
     for name in integrations_base.SOFTWARES:
         try:
@@ -350,7 +425,13 @@ def integrations(cfg: Config) -> dict[str, Any]:
                 "samples": list(report_data.samples),
             }
         )
-    return {"software": list(integrations_base.SOFTWARES), "reports": reports}
+    return {
+        "software": list(integrations_base.SOFTWARES),
+        "beta": True,
+        "notice": "Integracoes Rekordbox/Serato em beta: leitura e relink podem falhar."
+        " O foco esta na organizacao do filesystem (plan/apply).",
+        "reports": reports,
+    }
 
 
 def capabilities() -> dict[str, Any]:

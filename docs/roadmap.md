@@ -70,14 +70,17 @@ Varredura do filesystem e leitura de metadados.
 **Critério:** duplicatas agrupadas por 3 níveis, versões rotuladas e redundantes movidos
 para a quarentena de forma reversível (`undo`). ✔
 
-## Fase 7 — Integrações DJ ✅
+## Fase 7 — Integrações DJ (beta) ✅
+
+Protótipo de leitura/relink dos bancos DJ. **Marcado como beta**: não afirmamos funcionamento
+completo — o foco do produto é a organização no filesystem (Fases 5 e 13).
 
 - [x] Rekordbox: ler `master.db` (SQLCipher, extra `pyrekordbox`) e relink de paths
 - [x] Serato: ler `master.sqlite` (4.x, SQLite/WAL) e relink de paths
 - [x] verificação de integridade (`djlife status`) e relink dry-run por padrão (`djlife relink`)
 
 **Critério:** mover um arquivo no modo `move`, ver a referência quebrar em `status` e
-corrigi-la com `relink --apply` (com backup verificado), voltando a 0 ausentes. ✔
+corrigi-la com `relink --apply` (com backup verificado), voltando a 0 ausentes. ✔ (beta)
 
 ## Fase 8 — Interface de uso (cyberpunk) ✅
 
@@ -92,20 +95,118 @@ Interface web local para explorar o catálogo e entender as funcionalidades sem 
 **Critério:** `djlife ui` abre a página, mostra as métricas reais do catálogo e responde os
 endpoints JSON; assets e API validados via HTTP. ✔
 
-## Fase 9 — Análise de áudio
+## Fase 9 — Análise de áudio ✅
 
-- [ ] `essentia`: BPM (`RhythmExtractor2013`) e tonalidade → `audio_analysis`
-- [ ] "fast analysis" (primeiro minuto) para triagem rápida
-- [ ] notação Camelot/Open Key
+Backend plugável de análise (`analysis/`): contrato `Analyzer` + registro em `base.py`, com
+`librosa` como padrão nativo e `essentia` como extra opcional (ADR-0014).
 
-## Fase 10 — ML (embeddings e modelos)
+- [x] `analysis/camelot.py`: tonalidade → notação **Camelot** e **Open Key** (testável sem áudio)
+- [x] `analysis/librosa_backend.py`: BPM (`beat_track`) + tonalidade (croma + perfis de Krumhansl-Kessler)
+- [x] `analysis/essentia_backend.py`: `RhythmExtractor2013`/`KeyExtractor` (extra `essentia`, Linux/WSL2/Docker)
+- [x] "fast analysis" (`--fast`, primeiros 90 s) coexistindo com a análise completa via `analysis_version`
+- [x] `analysis/runner.py`: `build_plan` (dry-run) + `apply_plan` (upsert em `audio_analysis`; falhas em `scan_errors`)
+- [x] comando `djlife analyze` (`--backend`, `--apply`, `--fast`, `--force`, `--limit`) e config `[analysis]`
+- [x] BPM/tonalidade da análise no `report`/`stats` e na UI (visão geral + biblioteca)
 
-- [ ] L3: embeddings CLAP + k-NN
-- [ ] L4: foundation models (MERT/MuQ) como re-ranker
+**Critério:** rodar `scan → classify → analyze --apply` num catálogo real, ver BPM/tonalidade
+gravados em `audio_analysis` (sem falhas), `stats`/`report` refletindo a cobertura da análise e
+a UI mostrando as métricas. ✔
 
-## Fase 11 — Empacotamento
+## Fase 10 — ML (embeddings e modelos) ✅
 
-- [ ] PyInstaller onedir; núcleo enxuto; extras on-demand
+Camada L3 plugável (`ml/`): contrato `Embedder` + registro em `base.py`, com `clap`
+(CLAP via transformers, roda em CPU; extra `ml`) como primeiro backend (ADR-0015).
+
+- [x] `schema.sql` v4: tabela `embeddings` (vetor float32 LE em BLOB) + índice por modelo
+- [x] `ml/vectors.py`: `pack`/`unpack`/`l2_normalize`/`cosine` sem numpy (gravação independe do extra)
+- [x] `ml/clap_backend.py`: CLAP (`laion/clap-htsat-unfused`, 512 dims) com import tardio
+      (`EmbeddingUnavailable` + hint do extra); modelo só carregado no primeiro `embed()`
+- [x] `ml/runner.py`: `build_plan` (dry-run sem carregar o backend) + `apply_plan`
+      (upsert em `embeddings`; falhas em `scan_errors`), versionado por `model_version`
+- [x] `ml/neighbors.py`: k-NN sobre embeddings → propostas de gênero em `track_genres`
+      com `source = "embedding"`, confiança (A/B/C) pela concordância da vizinhança
+- [x] comandos `djlife embed` (`--apply`, `--force`, `--limit`, `--model`, `--window`) e
+      `djlife neighbors` (`--apply`, `--k`, `--min-similarity`) + config `[ml]`
+- [x] cobertura de embeddings/propostas na UI (visão geral) e pipeline L3 marcado como `parcial`
+
+Pendente desta fase: L4 (foundation models MERT/MuQ) — entregue na Fase 12 (ADR-0017),
+sobre os mesmos vetores de `embeddings`.
+
+**Critério:** rodar `scan → classify → embed --apply → neighbors --apply` (ou com embedder
+fake, sem baixar pesos) e ver vetores em `embeddings` e propostas em `track_genres`
+(`source = "embedding"`), sem sobrescrever labels L0/L1; `pytest`/`ruff`/`mypy` verdes. ✔
+
+## Fase 11 — Empacotamento ✅
+
+Executável **onedir** do núcleo enxuto via PyInstaller (extra `packaging`, ADR-0016).
+
+- [x] extra `packaging` (`pyinstaller>=6.0`) em `pyproject.toml`
+- [x] `packaging/djlife.spec`: entrypoint `djlife/__main__.py`, `hiddenimports` do pacote
+- [x] dados embutidos (`schema.sql`, `genres.yaml`, `ui/assets`) via `datas` com destino `djlife/…`
+- [x] extras pesados em `excludes` (`torch`/`transformers`/`librosa`/`essentia`/`pyacoustid`/…)
+
+**Critério:** `pyinstaller packaging/djlife.spec` gera `dist/djlife/` (~24 MB) e o binário roda
+`--version`, `scan`, `classify` e `stats` **sem o venv** (dados resolvidos via `_MEIPASS`). ✔
+
+## Fase 12 — L4 (foundation models) ✅
+
+Backends musicais dedicados como embedders plugáveis do L3/L4 (ADR-0017), sem mudar schema
+nem o k-NN.
+
+- [x] `ml/mert_backend.py`: MERT-v1-95M (`m-a-p/MERT-v1-95M`, 768 dims, 24 kHz) via
+      `transformers` (`trust_remote_code=True`); média das camadas ocultas no tempo
+- [x] `ml/muq_backend.py`: MuQ (`OpenMuQ/MuQ-large-msd-iter`, 1024 dims, 24 kHz) via pacote
+      `muq` (extra `muq`); média do tempo de `last_hidden_state`
+- [x] registro por dicionário em `ml/runner.py` (`_CREATORS`/`_VERSIONS`) e `EMBEDDERS`
+      ampliado para `clap`/`mert`/`muq`; `--backend` de `embed`/`neighbors` aceita os três
+- [x] config `[ml]` e `djlife.toml.example` documentando os backends; UI com L4 marcado `parcial`
+- [x] fix do `load_config` para tolerar BOM (`utf-8-sig`) descoberto no smoke test do executável
+
+**Critério:** `embed --backend mert|muq` seleciona o backend e grava vetores com o
+`model_version` correto (ou falha cedo com `EmbeddingUnavailable` quando o extra falta);
+`pytest`/`ruff`/`mypy` verdes. ✔
+
+## Fase 13 — Operação no filesystem ✅
+
+Consolida o foco do produto — **organizar as pastas de música no filesystem** — com exportação
+de playlists, auditoria do ambiente e integração contínua (integrações DJ ficam como beta,
+ADR-0018).
+
+- [x] `playlists.py`: playlists **M3U8** por gênero/subgênero (`--by genre|subgenre`) a partir
+      do catálogo, com caminhos relativos à playlist (`planner.resolve_labels` reaproveita a
+      classificação primária)
+- [x] comando `djlife export` (`--out`, `--by`, `--apply`, `--preview`), dry-run por padrão
+- [x] `doctor.py` + `djlife doctor`: auditoria **somente leitura** (schema/PRAGMAs/`quick_check`
+      do SQLite, raízes, `files.target`, extras opcionais e binários externos)
+- [x] `.github/workflows/ci.yml`: matriz Python 3.11/3.12 × Linux/Windows com `ruff check`,
+      `ruff format --check`, `mypy` e `pytest`
+
+**Critério:** `djlife export --apply` grava playlists `.m3u8` conferíveis contra a pasta e o
+tocador; `djlife doctor` diagnostica o ambiente sem escrever nada; CI verde nos quatro jobs. ✔
+
+## Fase 14 — Curadoria humana ✅
+
+Nem sempre as fontes concordam: as tags (L0), as regras (L1) e os embeddings (L3) podem apontar
+para gêneros diferentes, e a decisão não é automatizável sem risco. Esta fase **separa as faixas
+com conflito entre fontes** e delega ao usuário a leitura manual da faixa para definir
+gênero/subgênero (ADR-0019).
+
+- [x] `curation.py`: reúne as classificações de `track_genres` e aponta os **conflitos entre
+      fontes** (`divergente` = raízes distintas; `ambígua` = mesma raiz, subgêneros distintos),
+      ordenando os mais graves primeiro
+- [x] comando `djlife review` (`--list`, `--limit`, `--open`, `--config`): fila interativa que
+      mostra os sinais por fonte + sugestão, permite **abrir a faixa no player** (`--open`),
+      pular, manter ou sair e gravar a decisão
+- [x] decisão manual gravada em `track_genres` com `source = 'manual'` (confiança `A`), que passa
+      a ser a **classificação primária** (`planner.SOURCE_ORDER` prioriza `manual`)
+- [x] `planner`: `SOURCE_ORDER` + `_primary` priorizando `manual`; helpers públicos
+      (`genre_index`, `root_and_leaf`) reaproveitados pela curadoria
+- [x] `tests/test_curation.py`: conflito entre fontes, ordem (divergente antes de ambígua),
+      exclusão de faixas já decididas, idempotência e precedência da decisão manual
+
+**Critério:** `djlife review --list` lista as faixas com conflito (por fonte e nível); `djlife
+review` grava a escolha do usuário como `source = 'manual'` e ela passa a valer em
+`plan`/`export`/`report`; `pytest`/`ruff`/`mypy` verdes. ✔
 
 ## Riscos abertos
 

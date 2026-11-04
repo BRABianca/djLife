@@ -215,23 +215,17 @@ def _store(conn: sqlite3.Connection, file_id: int, data: TagData, now: str) -> N
         )
 
 
-def _iter_file_rows(
-    conn: sqlite3.Connection, file_ids: list[int] | None
-) -> Iterator[sqlite3.Row]:
+def _iter_file_rows(conn: sqlite3.Connection, file_ids: list[int] | None) -> Iterator[sqlite3.Row]:
     if file_ids is None:
         yield from conn.execute("SELECT id, path FROM files WHERE is_missing = 0")
         return
     for start in range(0, len(file_ids), CHUNK):
         batch = file_ids[start : start + CHUNK]
         placeholders = ",".join("?" * len(batch))
-        yield from conn.execute(
-            f"SELECT id, path FROM files WHERE id IN ({placeholders})", batch
-        )
+        yield from conn.execute(f"SELECT id, path FROM files WHERE id IN ({placeholders})", batch)
 
 
-def index_tags(
-    conn: sqlite3.Connection, file_ids: list[int] | None = None
-) -> tuple[int, int]:
+def index_tags(conn: sqlite3.Connection, file_ids: list[int] | None = None) -> tuple[int, int]:
     now = utcnow()
     indexed = 0
     errors = 0

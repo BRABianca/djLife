@@ -24,6 +24,10 @@
                  └────────────┘
                         │
                  ┌────────────┐
+                 │  curation  │──▶ conflitos entre fontes · decisão humana (source=manual)
+                 └────────────┘
+                        │
+                 ┌────────────┐
                  │  planner   │──▶ plano + diff (dry-run)
                  └────────────┘
                         │
@@ -33,6 +37,14 @@
                         │
                  ┌────────────┐
                  │ quarantine │──▶ move redundantes p/ _Quarentena · journal (undo)
+                 └────────────┘
+                        │
+                 ┌────────────┐
+                 │  analysis  │──▶ audio_analysis (BPM · tonalidade Camelot/Open Key)
+                 └────────────┘
+                        │
+                 ┌────────────┐
+                 │     ml     │──▶ embeddings (CLAP) · track_genres (source=embedding)
                  └────────────┘
                         │
                  ┌────────────┐
@@ -57,14 +69,20 @@ projeta no filesystem e grava journal.
 |---|---|---|---|---|
 | **L0** | Tags embutidas (`TBPM`, `TKEY`, `TCON`) | ~0 | A | ok |
 | **L1** | Regras locais + taxonomia (`genres.yaml`) | baixo | A/B | ok |
-| **L2** | DSP (BPM/key/energia) + classificador | médio | B | planejado |
-| **L3** | Embeddings (CLAP) + k-NN | alto | B | futuro |
-| **L4** | Foundation models (MERT/MuQ) | alto | B | futuro |
+| **L2** | DSP (BPM/key/energia) + classificador | médio | B | parcial (BPM/key via `librosa`) |
+| **L3** | Embeddings (CLAP) + k-NN | alto | B | parcial (CLAP + k-NN, `source=embedding`) |
+| **L4** | Foundation models (MERT/MuQ) | alto | B | parcial (`mert`/`muq` como embedders, ADR-0017) |
 
 Cada resultado grava `source` + `confidence` (`A`/`B`/`C`) em `track_genres`; nada é
 sobrescrito — camadas se acumulam e a decisão final é explícita.
 
-## 3. Modelo de dados (schema v3)
+A **classificação primária** de uma faixa (a que `planner`/`export`/`report` usam) é escolhida
+por `SOURCE_ORDER = {manual: 0, tags: 1, rules: 2, embedding: 3}` e depois por confiança. Quando
+as fontes discordam, o conflito é isolado e resolvido por **curadoria humana** (`djlife review`,
+seção 5): a decisão do usuário entra como `source = 'manual'` e passa a vencer as automáticas,
+sem apagá-las (ADR-0019).
+
+## 3. Modelo de dados (schema v4)
 
 | Tabela | Papel | Campos-chave |
 |---|---|---|
@@ -82,6 +100,7 @@ sobrescrito — camadas se acumulam e a decisão final é explícita.
 | `dup_groups` | grupos de duplicatas detectados | `kind` (`hash`/`fingerprint`/`isrc`/`mbid`), `key` (único por kind) |
 | `dup_members` | arquivos de cada grupo + keeper | `group_id`, `file_id`, `is_keeper` |
 | `file_versions` | versão rotulada da faixa | `file_id` (PK), `version`, `source`, `confidence` |
+| `embeddings` | vetor de áudio versionado por modelo (L3) | `file_id`, `model`, `model_version`, `dim`, `vector` (BLOB float32) |
 
 DDL em [`src/djlife/schema.sql`](../src/djlife/schema.sql). Acesso em `db.py`
 (`connect`, `open_catalog`, `initialize`).
@@ -109,6 +128,10 @@ maior duração → maior tamanho) permanece no lugar.
 djlife scan       → varre raízes, atualiza `files` (incremental por mtime+size)
 djlife classify   → resolve gênero em camadas (L0…), grava `track_genres`
 djlife versions   → rotula versão (Original/Extended/Radio/Remix/…) em `file_versions`
+djlife review     → revisa faixas com gênero divergente entre fontes; grava decisão `manual`
+djlife analyze    → BPM + tonalidade (Camelot/Open Key) → `audio_analysis` (dry-run; `--apply`)
+djlife embed      → vetores de áudio (clap/mert/muq) → `embeddings` (dry-run; `--apply`)
+djlife neighbors  → k-NN propõe gênero p/ faixas sem rótulo → `track_genres` (dry-run; `--apply`)
 djlife duplicates → agrupa duplicatas (hash → fingerprint → ISRC/MBID) em `dup_groups`
 djlife dedupe     → move redundantes p/ quarentena (dry-run por padrão; `--apply`)
 djlife plan       → gera plano + diff do que seria criado/movido (dry-run)
@@ -116,6 +139,8 @@ djlife apply      → executa o plano (hardlink/move + tags + journal)
 djlife undo       → reverte o último apply/dedupe pelo journal
 djlife status     → integridade dos bancos DJ (itens que resolvem p/ arquivos existentes)
 djlife relink     → reposiciona paths nos bancos DJ (dry-run por padrão; `--apply`)
+djlife export     → playlists M3U8 por gênero/subgênero a partir do catálogo (dry-run; `--apply`)
+djlife doctor     → auditoria somente-leitura do ambiente e do catálogo
 djlife ui         → sobe a interface web local (só leitura) em `127.0.0.1`
 djlife report     → exporta CSV/JSON + estatísticas
 ```
@@ -123,7 +148,10 @@ djlife report     → exporta CSV/JSON + estatísticas
 Convenções: Typer + Rich, barras de confiança A/B/C, respeito a `NO_COLOR`/`FORCE_COLOR`.
 `dedupe` e `apply` são **dry-run** por padrão; `--apply --yes` executa de fato.
 
-## 6. Integrações DJ
+## 6. Integrações DJ (beta)
+
+> **Beta:** a leitura e o relink dos bancos DJ não têm funcionamento garantido. O caminho
+> suportado e priorizado é a organização no **filesystem** (`plan`/`apply`, seções 4 e 5).
 
 | Software | Como armazena | Arquivo | Estratégia |
 |---|---|---|---|
@@ -179,11 +207,17 @@ leitura**: abre conexões efêmeras, não escreve no catálogo nem no filesystem
 | Paths/config | `platformdirs` | MIT | núcleo |
 | Fingerprint | `pyacoustid` + `fpcalc` | MIT | extra `fingerprint` |
 | Rekordbox | `pyrekordbox` | MIT | extra `rekordbox`; lê/relink `master.db` (SQLCipher) |
-| Análise | `essentia` | AGPL-3.0 | extra `analysis`; **sem wheel Windows** (WSL2/Docker) |
-| Embeddings | CLAP | Apache-2.0 | futuro |
+| Análise (padrão) | `librosa` + `soundfile` | ISC | extra `analysis`; roda nativo no Windows/Linux/macOS |
+| Análise (opcional) | `essentia` | AGPL-3.0 | extra `essentia`; **sem wheel Windows** (WSL2/Docker) |
+| Embeddings (L3) | `torch` + `transformers` | BSD-3/Apache-2.0 | extra `ml`; CLAP (`laion/clap-htsat-unfused`) e MERT (`m-a-p/MERT-v1-95M`), rodam em CPU |
+| Embeddings (L4) | `muq` | MIT (pesos CC-BY-NC) | extra `muq`; MuQ (`OpenMuQ/MuQ-large-msd-iter`), roda em CPU |
 | Modelos de gênero | MERT/MuQ/MAEST | CC BY-NC | uso pessoal |
 
-Extras opcionais: `pip install -e ".[fingerprint,rekordbox,analysis]"`.
+Extras opcionais: `pip install -e ".[fingerprint,rekordbox,analysis]"`; no Linux/WSL2,
+`essentia` pode substituir/complementar o backend padrão (`pip install -e ".[essentia]"`).
+Os embeddings exigem o extra `ml` (`pip install -e ".[ml]"`, CLAP/MERT) — ou o extra `muq`
+(`pip install -e ".[muq]"`, MuQ); os pesos são baixados do HuggingFace na primeira execução
+(o dry-run não baixa nada).
 
 ## 10. Layout do repositório
 
@@ -192,9 +226,10 @@ djLife/
 ├── pyproject.toml          # hatchling, src layout, entrypoint `djlife`
 ├── djlife.toml.example     # config: roots, catalog, classification, files, integrations
 ├── genres.local.yaml.example
+├── packaging/              # spec do PyInstaller (onedir)
 ├── docs/                   # concepcão, arquitetura, roadmap, decisões
 ├── src/djlife/
-│   ├── schema.sql          # DDL v3 (journal + fingerprints/dup/file_versions)
+│   ├── schema.sql          # DDL v4 (journal + fingerprints/dup/file_versions + embeddings)
 │   ├── genres.yaml         # taxonomia padrão (versionada)
 │   ├── db.py               # conexão + PRAGMAs + initialize
 │   ├── config.py           # load_config (tomllib)
@@ -202,13 +237,18 @@ djLife/
 │   ├── tags.py             # leitura/escrita de tags (DJLIFE_*)
 │   ├── taxonomy.py         # load_taxonomy + sync (genres/meta)
 │   ├── classifier.py       # L0 tags + L1 regras → track_genres
+│   ├── curation.py         # conflitos entre fontes + decisão humana (review)
 │   ├── versions.py         # rotulagem de versão → file_versions
 │   ├── dedupe.py           # 3 níveis de duplicatas → dup_groups/dup_members
 │   ├── quarantine.py       # move redundantes p/ quarentena (journal + undo)
 │   ├── planner.py          # template de caminho + diff (dry-run)
+│   ├── playlists.py        # playlists M3U8 por gênero/subgênero (export)
 │   ├── apply.py            # hardlink/move/tag_only + journal + undo
 │   ├── report.py           # CSV/JSON + estatísticas
-│   ├── integrations/       # Rekordbox/Serato: base, leitura + relink
+│   ├── doctor.py           # auditoria somente-leitura do ambiente/catálogo
+│   ├── analysis/           # backends de análise: base, camelot, librosa_backend, essentia_backend, runner
+│   ├── ml/                 # embeddings (L3/L4): base, vectors, clap/mert/muq_backend, runner, neighbors
+│   ├── integrations/       # Rekordbox/Serato: base, leitura + relink (beta)
 │   ├── ui/                 # interface web local: data.py, server.py, assets/
 │   └── cli.py              # Typer app
 └── tests/
@@ -216,5 +256,20 @@ djLife/
 
 ## 11. Empacotamento
 
-PyInstaller **onedir**; núcleo Python puro (~10–25 MB); Essentia/FFmpeg como extras
-on-demand para não inflar a distribuição.
+Distribuição **PyInstaller onedir** (extra `packaging`), núcleo Python puro em ~24 MB — roda sem
+Python nem venv (ADR-0016).
+
+```
+pip install -e ".[packaging]"
+pyinstaller packaging/djlife.spec      # → dist/djlife/djlife.exe
+```
+
+O spec [`packaging/djlife.spec`](../packaging/djlife.spec) usa `src/djlife/__main__.py` como
+entrypoint e embute os dados lidos em runtime por `Path(__file__).with_name(...)` — `schema.sql`,
+`genres.yaml` e `ui/assets` — com destino `djlife/…`, que é onde o `_MEIPASS` do PyInstaller
+posiciona o pacote congelado (por isso a resolução de dados não muda no código).
+
+Os extras pesados (`analysis`, `ml`, `muq`, `essentia`, `fingerprint`, `rekordbox`) entram em
+`excludes`: FFmpeg e esses backends ficam **on-demand**, instalados no ambiente Python de quem
+usa. O binário cobre o núcleo (scan, tags, classificação, plano/apply, dedupe, relatório, UI,
+status/relink de banco DJ).
