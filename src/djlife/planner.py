@@ -17,6 +17,7 @@ STATUS_CONFLICT = "conflict"
 STATUS_UNCLASSIFIED = "unclassified"
 
 CONFIDENCE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
+SOURCE_ORDER = {"manual": 0, "tags": 1, "rules": 2, "embedding": 3}
 _INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE = re.compile(r"\s+")
 
@@ -99,7 +100,7 @@ class _Genre:
     level: int
 
 
-def _genre_index(conn: sqlite3.Connection) -> dict[int, _Genre]:
+def genre_index(conn: sqlite3.Connection) -> dict[int, _Genre]:
     return {
         int(row["id"]): _Genre(
             id=int(row["id"]),
@@ -112,7 +113,7 @@ def _genre_index(conn: sqlite3.Connection) -> dict[int, _Genre]:
     }
 
 
-def _root_and_leaf(genres: dict[int, _Genre], genre_id: int) -> tuple[str, str]:
+def root_and_leaf(genres: dict[int, _Genre], genre_id: int) -> tuple[str, str]:
     node = genres.get(genre_id)
     if node is None:
         return "", ""
@@ -123,23 +124,37 @@ def _root_and_leaf(genres: dict[int, _Genre], genre_id: int) -> tuple[str, str]:
     return node.name, subgenre
 
 
-def _classifications(conn: sqlite3.Connection) -> dict[int, list[tuple[int, str]]]:
-    result: dict[int, list[tuple[int, str]]] = {}
-    for row in conn.execute("SELECT track_id, genre_id, confidence FROM track_genres"):
+def _classifications(conn: sqlite3.Connection) -> dict[int, list[tuple[int, str, str]]]:
+    result: dict[int, list[tuple[int, str, str]]] = {}
+    for row in conn.execute("SELECT track_id, genre_id, confidence, source FROM track_genres"):
         result.setdefault(int(row["track_id"]), []).append(
-            (int(row["genre_id"]), str(row["confidence"]))
+            (int(row["genre_id"]), str(row["confidence"]), str(row["source"]))
         )
     return result
 
 
-def _primary(entries: list[tuple[int, str]], genres: dict[int, _Genre]) -> int:
-    def key(entry: tuple[int, str]) -> tuple[int, int, int]:
-        genre_id, confidence = entry
+def _primary(entries: list[tuple[int, str, str]], genres: dict[int, _Genre]) -> int:
+    def key(entry: tuple[int, str, str]) -> tuple[int, int, int, int]:
+        genre_id, confidence, source = entry
         node = genres.get(genre_id)
         level = node.level if node is not None else 0
-        return (CONFIDENCE_ORDER.get(confidence, 9), -level, genre_id)
+        return (
+            SOURCE_ORDER.get(source, 9),
+            CONFIDENCE_ORDER.get(confidence, 9),
+            -level,
+            genre_id,
+        )
 
     return min(entries, key=key)[0]
+
+
+def resolve_labels(conn: sqlite3.Connection) -> dict[int, tuple[str, str]]:
+    """Mapeia ``track_id`` -> ``(genero_raiz, subgenero)`` pela classificacao primaria."""
+    genres = genre_index(conn)
+    return {
+        track_id: root_and_leaf(genres, _primary(entries, genres))
+        for track_id, entries in _classifications(conn).items()
+    }
 
 
 def build_plan(
@@ -151,7 +166,7 @@ def build_plan(
     strategy: str,
 ) -> Plan:
     target = Path(target)
-    genres = _genre_index(conn)
+    genres = genre_index(conn)
     classifications = _classifications(conn)
     taken: set[str] = set()
     items: list[PlanItem] = []
@@ -173,7 +188,7 @@ def build_plan(
             )
             continue
 
-        genre_name, subgenre = _root_and_leaf(genres, _primary(entries, genres))
+        genre_name, subgenre = root_and_leaf(genres, _primary(entries, genres))
         ext = str(row["ext"] or "")
         title = str(row["title"] or "") or src.stem
         fields = {
