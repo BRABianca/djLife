@@ -64,7 +64,15 @@
                  └────────────┘
                         │
                  ┌────────────┐
-                 │     ui     │──▶ página local (só leitura) + /api/* JSON
+                 │  registry  │──▶ registro JSON local de licencas (active/expired/revoked)
+                 └────────────┘
+                        │
+                 ┌────────────┐
+                 │   admin    │──▶ emitir/renovar/revogar · modo owner (curinga) · gate por token
+                 └────────────┘
+                        │
+                 ┌────────────┐
+                 │     ui     │──▶ página local (leitura) + /api/* JSON · escrita só em /api/admin/*
                  └────────────┘
 ```
 
@@ -148,10 +156,10 @@ djlife undo       → reverte o último apply/dedupe pelo journal
 djlife status     → integridade dos bancos DJ (itens que resolvem p/ arquivos existentes)
 djlife relink     → reposiciona paths nos bancos DJ (dry-run por padrão; `--apply`)
 djlife export     → playlists M3U8 por gênero/subgênero a partir do catálogo (dry-run; `--apply`)
-djlife license    → gera chaves, emite licença, mostra hash da máquina e valida a ativação offline
+djlife license    → gera chaves, emite/renova/revoga licenças, modo owner e valida a ativação offline
 djlife import     → ingestão online via yt-dlp (premium; gate de licença; dry-run por padrão)
 djlife doctor     → auditoria somente-leitura do ambiente e do catálogo
-djlife ui         → sobe a interface web local (só leitura) em `127.0.0.1`
+djlife ui         → sobe a interface web local em `127.0.0.1` (catálogo só leitura; admin por token)
 djlife report     → exporta CSV/JSON + estatísticas
 ```
 
@@ -187,29 +195,45 @@ dependências novas e sem build de frontend (ADR-0013).
 | Camada | Arquivo | Papel |
 |---|---|---|
 | Dados | `ui/data.py` | leituras do catálogo → JSON (`overview`, `tracks`, `duplicates`, `versions`, `integrations`, `capabilities`) |
-| Servidor | `ui/server.py` | `ThreadingHTTPServer` (stdlib): assets em `ui/assets` + endpoints `/api/*` |
+| Servidor | `ui/server.py` | `ThreadingHTTPServer` (stdlib): assets em `ui/assets` + endpoints `/api/*` (leitura) e `/api/admin/*` (escrita, gated por token) |
+| Admin | `admin.py` (via servidor) | emitir/renovar/revogar licenças no registro JSON; modo owner |
 | Assets | `ui/assets/` | `index.html`, `app.css`, `app.js` (Tech-Noir / luxo sombrio) |
 
-Endpoints: `/api/overview`, `/api/tracks?q=&limit=`, `/api/duplicates`, `/api/versions`,
+Endpoints de leitura: `/api/overview`, `/api/tracks?q=&limit=`, `/api/duplicates`, `/api/versions`,
 `/api/integrations`, `/api/capabilities`, `/api/version`.
 
-Abas da página: **visão geral**, **biblioteca**, **duplicatas**, **versões**, **integrações** e
-**premium** e **manual** (pipeline L0→L4, comandos, oferta premium e garantias de segurança).
-O servidor é **somente
-leitura**: abre conexões efêmeras, não escreve no catálogo nem no filesystem, escuta em
-`127.0.0.1` por padrão e resolve assets bloqueando travessia de diretório.
+Endpoints de administração: `GET /api/admin/status` (público: `{enabled, owner}`),
+`GET /api/admin/licenses` (autenticado: detalhes + lista) e `POST /api/admin/{issue,renew,revoke}`.
+Toda rota admin exige o header `X-Admin-Token` (ou `token` no body), conferido contra
+`[license].admin_token` com `hmac.compare_digest`.
+
+Abas da página: **visão geral**, **biblioteca**, **duplicatas**, **versões**, **integrações**,
+**premium**, **manual** (pipeline L0→L4, comandos, oferta premium e garantias de segurança) e
+**admin** (controle de licenças). A aba **admin** fica **oculta por padrão** e só aparece quando
+`[license].admin_token` está configurado — o usuário comum vê um app limpo, sem a aba.
+O catálogo musical é **somente leitura**: abre conexões efêmeras, não escreve no catálogo nem no
+filesystem da biblioteca, escuta em `127.0.0.1` por padrão e resolve assets bloqueando travessia
+de diretório. A **única** escrita vinda da UI ocorre em `/api/admin/*` e atinge apenas o
+**registro JSON de licenças** e arquivos de licença (ADR-0021, emenda à ADR-0013).
 
 ## 7.1 Licenciamento offline do premium
 
 O premium é separado do core por uma licença local validada offline:
 
-- a **chave privada** fica fora do produto e serve apenas para emissão manual;
+- a **chave privada** fica fora do produto (cifrada por passphrase) e serve apenas para emissão
+  manual;
 - o app carrega apenas a **chave pública** para verificar a assinatura Ed25519;
 - a licença (`license.json`) inclui `customer_id`, `plan`, `issued_at`, `expires_at`,
   `machine_hash` e `features`;
 - o `machine_hash` é derivado da máquina local e pode prender a licença a um único host;
 - `djlife license status` e `djlife doctor` mostram se a licença está ausente, expirada,
   assinada por outra chave ou vinculada a outra máquina.
+
+O **registro local** (`registry.py`) indexa as licenças emitidas num JSON independente do
+catálogo, com estado efetivo `active`/`expired`/`revoked`. O **modo owner** (`plan = owner`,
+`features = ("*",)`) libera **todos** os recursos via `premium.is_owner`/`license.feature_granted`;
+a gestão (emitir/renovar/revogar) roda pela CLI (`djlife license …`) ou pela **aba admin** da UI,
+ambas sobre o mesmo núcleo de `admin.py` e o mesmo registro.
 
 ## 8. Performance
 
@@ -270,6 +294,11 @@ djLife/
 │   ├── apply.py            # hardlink/move/tag_only + journal + undo
 │   ├── report.py           # CSV/JSON + estatísticas
 │   ├── doctor.py           # auditoria somente-leitura do ambiente/catálogo
+│   ├── premium.py          # planos/recursos + gate (require_feature) e modo owner
+│   ├── license.py          # Ed25519: chaves, claims canônicos, machine_hash, expiração
+│   ├── registry.py         # registro JSON local de licenças (active/expired/revoked)
+│   ├── admin.py            # admin: emitir/renovar/revogar + gate por token (aba admin)
+│   ├── importer.py         # ingestão online via yt-dlp (premium; dry-run por padrão)
 │   ├── analysis/           # backends de análise: base, camelot, librosa_backend, essentia_backend, runner
 │   ├── ml/                 # embeddings (L3/L4): base, vectors, clap/mert/muq_backend, runner, neighbors
 │   ├── integrations/       # Rekordbox/Serato: base, leitura + relink (beta)

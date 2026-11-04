@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from djlife import license as license_mod
 
 
@@ -87,3 +89,52 @@ def test_status_from_paths_reports_missing_files(tmp_path) -> None:
 
     assert status.valid is False
     assert status.reason == "chave-publica-ausente"
+
+
+def test_feature_granted_with_wildcard() -> None:
+    assert license_mod.feature_granted((license_mod.WILDCARD_FEATURE,), "premium.novo") is True
+    assert license_mod.feature_granted(("premium.ytdlp_import",), "premium.ytdlp_import") is True
+    assert license_mod.feature_granted(("premium.ytdlp_import",), "premium.crates") is False
+
+
+def test_encrypted_private_key_requires_passphrase(tmp_path) -> None:
+    private_key = tmp_path / "private.pem"
+    public_key = tmp_path / "public.pem"
+    license_file = tmp_path / "license.json"
+    license_mod.generate_keypair(private_key, public_key, passphrase="segredo")
+
+    with pytest.raises(license_mod.LicenseError):
+        license_mod.issue_license(
+            private_key,
+            license_file,
+            customer_id="cliente-4",
+            plan="lifetime",
+            features=("premium.ytdlp_import",),
+            machine_hash_value=None,
+            expires_at=None,
+        )
+
+    envelope = license_mod.issue_license(
+        private_key,
+        license_file,
+        customer_id="cliente-4",
+        plan="lifetime",
+        features=("premium.ytdlp_import",),
+        machine_hash_value=None,
+        expires_at=None,
+        private_key_password="segredo",
+    )
+    assert envelope.key_id
+
+
+def test_parse_expiration_handles_days_and_dates() -> None:
+    assert license_mod.parse_expiration() is None
+
+    target = license_mod.parse_expiration(expires="2030-01-01")
+    assert target is not None and target.year == 2030
+
+    days = license_mod.parse_expiration(days=30)
+    assert days is not None and days > license_mod.utcnow()
+
+    with pytest.raises(ValueError):
+        license_mod.parse_expiration(days=1, expires="2030-01-01")

@@ -343,6 +343,147 @@ async function loadManual() {
     .join("");
 }
 
+const ADMIN_TOKEN_KEY = "djlife.adminToken";
+
+function adminToken() {
+  try {
+    return sessionStorage.getItem(ADMIN_TOKEN_KEY) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function setAdminToken(value) {
+  try {
+    if (value) sessionStorage.setItem(ADMIN_TOKEN_KEY, value);
+    else sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch (err) {
+    /* sessionStorage indisponivel */
+  }
+}
+
+async function adminFetch(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Admin-Token": adminToken(),
+      ...(options.headers || {}),
+    },
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    payload = null;
+  }
+  if (!response.ok) {
+    throw new Error((payload && payload.error) || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+function licenseBadge(status) {
+  const tone = status === "active" ? "" : status === "revoked" ? " warn" : " muted";
+  return `<span class="badge${tone}">${esc(status || "-")}</span>`;
+}
+
+function renderAdminSummary(status) {
+  const registry = status.registry_path
+    ? `<div class="kv-row"><span>registro</span><span title="${esc(status.registry_path)}">${esc(shorten(status.registry_path, 46))}</span></div>`
+    : "";
+  const key = status.has_private_key === undefined
+    ? ""
+    : `<div class="kv-row"><span>chave privada</span><span>${status.has_private_key ? "presente" : "ausente"}</span></div>`;
+  $("#admin-summary").innerHTML = `
+    <div class="kv-row"><span>painel admin</span><span>${status.enabled ? "habilitado" : "desabilitado"}</span></div>
+    <div class="kv-row"><span>modo owner</span><span>${status.owner ? "ativo (acesso total)" : "inativo"}</span></div>
+    ${key}
+    ${registry}
+  `;
+}
+
+async function refreshLicenses() {
+  const data = await adminFetch("/api/admin/licenses");
+  if (data.status) renderAdminSummary(data.status);
+  const rows = data.licenses || [];
+  $("#admin-table tbody").innerHTML = rows.length
+    ? rows
+        .map(
+          (row) => `<tr>
+            <td>${esc(row.customer_id)}</td>
+            <td>${esc(row.plan)}</td>
+            <td>${licenseBadge(row.effective_status)}</td>
+            <td class="mono">${esc(row.expires_at || "sem expiracao")}</td>
+            <td class="mono">${esc(shorten(row.machine_hash || "-", 16))}</td>
+            <td class="mono">${esc(row.id)}</td>
+            <td>
+              <button class="btn ghost" data-action="renew" data-id="${esc(row.id)}">renovar</button>
+              <button class="btn ghost" data-action="revoke" data-id="${esc(row.id)}">revogar</button>
+            </td>
+          </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="7" class="empty">nenhuma licenca registrada</td></tr>`;
+  return data;
+}
+
+async function loadAdmin() {
+  const status = await api("/api/admin/status");
+  const notice = $("#admin-notice");
+  const gate = $("#admin-gate");
+  const consolePanel = $("#admin-console");
+  const listPanel = $("#admin-list-panel");
+
+  renderAdminSummary(status);
+  notice.classList.remove("hidden");
+
+  if (!status.enabled) {
+    notice.textContent =
+      "Painel admin desabilitado: defina [license] admin_token no djlife.toml e reinicie o `djlife ui`.";
+    gate.classList.add("hidden");
+    consolePanel.classList.add("hidden");
+    listPanel.classList.add("hidden");
+    return;
+  }
+
+  notice.textContent = status.owner
+    ? "Modo owner ativo: acesso total, sem trava premium."
+    : "Painel admin habilitado. Informe o token para gerenciar licencas.";
+
+  if (!adminToken()) {
+    gate.classList.remove("hidden");
+    consolePanel.classList.add("hidden");
+    listPanel.classList.add("hidden");
+    return;
+  }
+
+  try {
+    await refreshLicenses();
+  } catch (err) {
+    setAdminToken("");
+    gate.classList.remove("hidden");
+    consolePanel.classList.add("hidden");
+    listPanel.classList.add("hidden");
+    throw new Error(`sessao admin recusada: ${err.message}`);
+  }
+  gate.classList.add("hidden");
+  consolePanel.classList.remove("hidden");
+  listPanel.classList.remove("hidden");
+}
+
+async function initAdminTab() {
+  try {
+    const status = await api("/api/admin/status");
+    if (status.enabled) {
+      $('.tab[data-view="admin"]').classList.remove("hidden");
+    }
+  } catch (err) {
+    /* sem painel admin: mantem a interface limpa */
+  }
+}
+
 const loaders = {
   overview: loadOverview,
   library: loadLibrary,
@@ -351,6 +492,7 @@ const loaders = {
   integrations: loadIntegrations,
   premium: loadPremium,
   manual: loadManual,
+  admin: loadAdmin,
 };
 
 async function run(view) {
@@ -383,10 +525,78 @@ $("#library-form").addEventListener("submit", (event) => {
   run("library");
 });
 
+$("#admin-login").addEventListener("submit", (event) => {
+  event.preventDefault();
+  setAdminToken($("#admin-token").value.trim());
+  $("#admin-token").value = "";
+  run("admin");
+});
+
+$("#admin-logout").addEventListener("click", () => {
+  setAdminToken("");
+  run("admin");
+});
+
+$("#admin-issue").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(event.target);
+  const body = {
+    customer_id: String(data.get("customer_id") || "").trim(),
+    plan: String(data.get("plan") || "lifetime"),
+    days: String(data.get("days") || "").trim() || null,
+    expires: String(data.get("expires") || "").trim() || null,
+    machine_hash: String(data.get("machine_hash") || "").trim() || null,
+    passphrase: String(data.get("passphrase") || ""),
+    bind_current_machine: data.get("bind_current_machine") === "on",
+  };
+  if (!body.customer_id) {
+    showBanner("Informe o cliente para emitir a licenca.");
+    return;
+  }
+  try {
+    showBanner("");
+    setStatus("", "emitindo");
+    await adminFetch("/api/admin/issue", { method: "POST", body: JSON.stringify(body) });
+    event.target.reset();
+    await refreshLicenses();
+    setStatus("ok", "online");
+  } catch (err) {
+    setStatus("fail", "erro");
+    showBanner(`Falha ao emitir licenca: ${err.message}`);
+  }
+});
+
+$("#admin-table").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const id = button.dataset.id;
+  const action = button.dataset.action;
+  let body = null;
+  if (action === "renew") {
+    const answer = window.prompt("Nova validade em dias (vazio = sem expiracao):", "365");
+    if (answer === null) return;
+    body = { id, days: answer.trim() || null };
+  } else if (action === "revoke") {
+    const reason = window.prompt("Motivo da revogacao (opcional):", "");
+    if (reason === null) return;
+    body = { id, reason: reason.trim() || null };
+  } else {
+    return;
+  }
+  try {
+    showBanner("");
+    await adminFetch(`/api/admin/${action}`, { method: "POST", body: JSON.stringify(body) });
+    await refreshLicenses();
+  } catch (err) {
+    showBanner(`Falha na acao admin: ${err.message}`);
+  }
+});
+
 api("/api/version")
   .then((info) => {
     $("#meta-app").textContent = `v${info.version}`;
   })
   .catch(() => {});
 
+initAdminTab();
 activate("overview");

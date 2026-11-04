@@ -10,9 +10,11 @@ from djlife.db import default_db_path
 from djlife.license import default_license_path, default_public_key_path
 from djlife.ml.base import DEFAULT_MIN_SIMILARITY, DEFAULT_NEIGHBORS
 from djlife.ml.base import EMBEDDERS as ML_EMBEDDERS
+from djlife.registry import default_registry_path
 
 DEFAULT_EXTENSIONS = ("mp3", "flac", "m4a", "aiff", "wav", "ogg", "opus")
 FILE_STRATEGIES = ("hardlink", "move", "tag_only")
+DEFAULT_PRIVATE_KEY = Path("secrets/license_private_key.pem")
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,9 @@ class MlConfig:
 class LicenseConfig:
     public_key: Path | None = None
     license_file: Path | None = None
+    private_key: Path | None = None
+    registry_file: Path | None = None
+    admin_token: str | None = None
 
     @property
     def public_key_path(self) -> Path:
@@ -81,6 +86,14 @@ class LicenseConfig:
     @property
     def license_path(self) -> Path:
         return self.license_file or default_license_path()
+
+    @property
+    def private_key_path(self) -> Path:
+        return self.private_key or DEFAULT_PRIVATE_KEY
+
+    @property
+    def registry_path(self) -> Path:
+        return self.registry_file or default_registry_path()
 
 
 @dataclass(frozen=True)
@@ -195,5 +208,8 @@ def load_config(path: Path | str | None = None) -> Config:
         license=LicenseConfig(
             public_key=_optional_path(license_data.get("public_key")),
             license_file=_optional_path(license_data.get("license_file")),
+            private_key=_optional_path(license_data.get("private_key")),
+            registry_file=_optional_path(license_data.get("registry_file")),
+            admin_token=license_data.get("admin_token"),
         ),
     )

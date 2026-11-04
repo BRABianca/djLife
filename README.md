@@ -92,15 +92,21 @@ djlife premium
 
 # 9. Licenciamento offline do premium
 djlife license machine-id
-djlife license generate-keypair
+djlife license generate-keypair                 # --encrypt cifra a chave privada (passphrase)
 djlife license issue --customer-id CLIENTE --plan lifetime --bind-current-machine
 djlife license status
+
+# 9b. Edição ADM/dona (aba de controle de usuários)
+djlife license owner --customer-id DONA         # licença owner: todos os recursos liberados
+djlife license list                             # lista as licenças emitidas (registro JSON)
+djlife license renew RECORD_ID --days 30        # renova uma licença
+djlife license revoke RECORD_ID                 # marca a licença como revogada
 
 # 10. Importação online com yt-dlp (premium; exige licença)
 djlife import "https://..."            # dry-run: lê os metadados
 djlife import "https://..." --apply    # baixa para --out (padrão: downloads/)
 
-# 11. Interface web local (Tech-Noir, somente leitura)
+# 11. Interface web local (Tech-Noir; catálogo só leitura; aba admin por token)
 djlife ui
 
 # 12. Diagnóstico do ambiente e do catálogo (somente leitura)
@@ -193,7 +199,39 @@ Configuração opcional no `djlife.toml`:
 [license]
 public_key = "C:\\caminho\\license_public_key.pem"
 license_file = "C:\\caminho\\license.json"
+private_key = "C:\\caminho\\license_private_key.pem"   # só para emissão (ADM)
+registry_file = "C:\\caminho\\licenses.json"           # registro das licenças emitidas
+admin_token = "uma-passphrase-forte"                   # habilita a aba admin da UI
 ```
+
+### Edição ADM/dona (aba de controle de usuários)
+
+A dona (ADM) opera em **modo owner**: uma licença `plan = owner` cujo recurso é o curinga `*`,
+liberando **todos** os recursos premium sem trava.
+
+```powershell
+# gerar o par de chaves já cifrando a privada (guarde a passphrase)
+djlife license generate-keypair --encrypt
+
+# instalar a licença owner na própria máquina (dona)
+djlife license owner --customer-id DONA
+
+# gerenciar o registro local de licenças
+djlife license list
+djlife license renew RECORD_ID --days 30
+djlife license revoke RECORD_ID
+```
+
+A aba **admin** do `djlife ui` oferece a mesma gestão (emitir, renovar, revogar) pelo navegador.
+Com `[license].admin_token` definido, abra a aba, informe o token e opere; sem token a
+administração fica **desabilitada**. A regra de segurança (ADR-0021): o **catálogo musical
+continua somente leitura** — as únicas escritas vindas da UI ocorrem em `/api/admin/*`,
+autenticadas pelo header `X-Admin-Token`, e atingem apenas o **registro JSON de licenças** e os
+arquivos de licença. O servidor segue escutando em `127.0.0.1`.
+
+> **Revogação offline não é DRM.** Marcar uma licença como `revoked` atualiza o **registro da
+> dona**, mas não desliga uma licença já entregue ao cliente — o app só verifica a assinatura
+> offline. A revogação serve para o controle interno, não como desligamento remoto.
 
 ---
 

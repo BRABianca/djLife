@@ -38,6 +38,7 @@
     <button class="tab" data-view="integrations">integracoes</button>
     <button class="tab" data-view="premium">premium</button>
     <button class="tab" data-view="manual">manual</button>
+    <button class="tab hidden" data-view="admin">admin</button>
   </nav>
 
   <main>
@@ -167,10 +168,60 @@
         <div class="safe" id="manual-safety"></div>
       </div>
     </section>
+
+    <section class="view" id="view-admin">
+      <div class="view-head">
+        <h2>admin</h2>
+        <p>Painel da dona: emitir, renovar e revogar licencas offline. Escrita restrita ao registro local.</p>
+      </div>
+      <div class="banner beta hidden" id="admin-notice" role="note"></div>
+      <div class="kv panel" id="admin-summary"></div>
+
+      <div class="panel" id="admin-gate">
+        <h3>acesso restrito</h3>
+        <form class="searchbar" id="admin-login">
+          <input type="password" id="admin-token" placeholder="token de administracao" autocomplete="off" />
+          <button type="submit" class="btn">entrar</button>
+        </form>
+        <div class="hint">Defina <code>[license] admin_token</code> no djlife.toml e reinicie o <code>djlife ui</code>. O token fica apenas nesta sessao do navegador.</div>
+      </div>
+
+      <div class="panel hidden" id="admin-console">
+        <h3>emitir licenca <button class="btn ghost" id="admin-logout" type="button">sair</button></h3>
+        <form class="admin-form" id="admin-issue">
+          <label>cliente<input type="text" name="customer_id" placeholder="nome ou id do cliente" required /></label>
+          <label>plano
+            <select name="plan">
+              <option value="lifetime">lifetime</option>
+              <option value="monthly">monthly</option>
+              <option value="owner">owner</option>
+            </select>
+          </label>
+          <label>dias<input type="number" name="days" min="1" placeholder="opcional" /></label>
+          <label>expira em<input type="date" name="expires" /></label>
+          <label>hash da maquina<input type="text" name="machine_hash" placeholder="opcional" /></label>
+          <label>passphrase da chave<input type="password" name="passphrase" placeholder="se a chave for cifrada" autocomplete="off" /></label>
+          <label class="admin-check"><input type="checkbox" name="bind_current_machine" /> vincular a esta maquina</label>
+          <button type="submit" class="btn">emitir</button>
+        </form>
+      </div>
+
+      <div class="panel hidden" id="admin-list-panel">
+        <h3>licencas emitidas</h3>
+        <div class="table-wrap">
+          <table class="table" id="admin-table">
+            <thead>
+              <tr><th>cliente</th><th>plano</th><th>status</th><th>expira</th><th>maquina</th><th>id</th><th>acoes</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer class="foot">
-    <span>djLife // interface local somente leitura</span>
+    <span>djLife // catalogo somente leitura · admin por token</span>
     <span id="foot-catalog"></span>
   </footer>
 

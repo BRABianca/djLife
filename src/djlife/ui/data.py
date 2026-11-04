@@ -61,10 +61,11 @@ COMMANDS: tuple[dict[str, str], ...] = (
     },
     {
         "name": "license",
-        "usage": "djlife license status|issue|generate-keypair|machine-id",
-        "summary": "Gera, emite e valida licencas offline assinadas por Ed25519.",
+        "usage": "djlife license status|issue|owner|list|renew|revoke|generate-keypair|machine-id",
+        "summary": "Gera, emite, lista e revoga licencas offline assinadas por Ed25519.",
         "detail": "Licenca local com hash de maquina, expiracao opcional e verificacao"
-        " offline para separar o premium do core.",
+        " offline. `license owner` ativa o modo dona (curinga) com chave cifrada; o"
+        " painel admin da UI gerencia o mesmo registro JSON local.",
     },
     {
         "name": "import",
@@ -225,6 +226,11 @@ SAFETY: tuple[dict[str, str], ...] = (
         "title": "Premium desacoplado",
         "detail": "Liberacao/licenca podem ser geridas manualmente fora do core;"
         " extras opcionais nao travam scan, plan, apply ou a leitura do catalogo.",
+    },
+    {
+        "title": "Escrita isolada no admin",
+        "detail": "A unica escrita da UI ocorre na aba admin, restrita ao registro local de"
+        " licencas, exigindo token e bind em 127.0.0.1. O catalogo segue somente leitura.",
     },
 )
 
