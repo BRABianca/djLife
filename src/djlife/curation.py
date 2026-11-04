@@ -148,7 +148,12 @@ def build_queue(conn: sqlite3.Connection) -> list[ReviewItem]:
         )
         meta.setdefault(
             track_id,
-            (int(row["file_id"]), str(row["path"]), str(row["title"] or ""), str(row["artist"] or "")),
+            (
+                int(row["file_id"]),
+                str(row["path"]),
+                str(row["title"] or ""),
+                str(row["artist"] or ""),
+            ),
         )
 
     items: list[ReviewItem] = []

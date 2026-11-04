@@ -1249,7 +1249,9 @@ def _print_review_item(item: curation.ReviewItem) -> None:
     console.print(f"[bold]{escape(item.artist or '')}[/bold] - {escape(title)}")
     console.print(f"[dim]{escape(item.path)}[/dim]")
     for signal in item.signals:
-        console.print(f"  {signal.source:<9} {escape(signal.label)} [dim]({signal.confidence})[/dim]")
+        console.print(
+            f"  {signal.source:<9} {escape(signal.label)} [dim]({signal.confidence})[/dim]"
+        )
     suggestion = escape(item.suggestion.label)
     console.print(f"  [yellow]{item.level}[/yellow] -> sugestao: [bold]{suggestion}[/bold]")
 
@@ -1349,7 +1351,9 @@ def _run_review(
             decided += 1
         else:
             skipped += 1
-    console.print(f"[green]Decisoes gravadas:[/green] {decided} | [dim]sem decisao:[/dim] {skipped}")
+    console.print(
+        f"[green]Decisoes gravadas:[/green] {decided} | [dim]sem decisao:[/dim] {skipped}"
+    )
 
 
 @app.command()
@@ -1378,7 +1382,9 @@ def review(
             return
         choices = curation.genre_choices(conn)
         if not choices:
-            console.print("[yellow]Taxonomia vazia; rode `djlife scan` para carregar os generos.[/yellow]")
+            console.print(
+                "[yellow]Taxonomia vazia; rode `djlife scan` para carregar os generos.[/yellow]"
+            )
             return
         _run_review(conn, items, choices, open_audio=open_audio)
     finally:
