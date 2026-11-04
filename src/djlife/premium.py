@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+from djlife import importer
 from djlife import license as license_mod
 from djlife.config import Config
 
@@ -31,7 +32,8 @@ class PremiumFeature:
     detail: str
 
 
-YTDLP_IMPORT_FEATURE = "premium.ytdlp_import"
+DOWNLOAD_FEATURE = "premium.download"
+ASSISTED_CURATION_FEATURE = "premium.assisted_curation"
 OWNER_PLAN = license_mod.OWNER_PLAN
 WILDCARD_FEATURE = license_mod.WILDCARD_FEATURE
 
@@ -58,18 +60,24 @@ PLANS: tuple[PremiumPlan, ...] = (
 
 FEATURES: tuple[PremiumFeature, ...] = (
     PremiumFeature(
-        code=YTDLP_IMPORT_FEATURE,
-        name="Importacao online com yt-dlp",
+        code=DOWNLOAD_FEATURE,
+        name="Download online",
         included_in=("monthly", "lifetime"),
         status="ativo",
-        detail="Baixa audio/metadados de fontes suportadas pelo yt-dlp (comando `djlife import`).",
+        detail=(
+            "Baixa audio e metadados de fontes suportadas (comando `djlife import`"
+            " e painel de download na aba premium)."
+        ),
     ),
     PremiumFeature(
-        code="premium.assisted_curation",
+        code=ASSISTED_CURATION_FEATURE,
         name="Curadoria assistida",
         included_in=("monthly", "lifetime"),
-        status="planejado",
-        detail="Fluxos guiados para revisar conflitos, colecoes e lacunas antes do apply.",
+        status="ativo",
+        detail=(
+            "Fila de conflitos de genero revisavel na aba premium: escolha o genero correto"
+            " e grave a decisao manual (source=manual), realimentando a camada `learned`."
+        ),
     ),
     PremiumFeature(
         code="premium.crates",
@@ -139,5 +147,10 @@ def as_payload(cfg: Config | None = None) -> dict[str, object]:
             " manualmente, de forma interpessoal, sem intermediario dentro do produto."
         ),
         "install": 'pip install -e ".[premium]"',
+        "download": {
+            "feature": DOWNLOAD_FEATURE,
+            "backend_available": importer.available(),
+            "install": importer.INSTALL_HINT,
+        },
         "license": status,
     }

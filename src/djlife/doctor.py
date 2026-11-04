@@ -32,6 +32,9 @@ MODULES: tuple[tuple[str, str], ...] = (
     ("premium", "yt_dlp"),
 )
 
+# Nomes exibidos no diagnostico quando o modulo tecnico nao deve virar marca.
+MODULE_LABELS: dict[str, str] = {"yt_dlp": "backend de download"}
+
 # Binarios externos usados por extras especificos.
 BINARIES: tuple[tuple[str, str], ...] = (
     ("fingerprint", "fpcalc"),
@@ -137,7 +140,7 @@ def _check_extras() -> list[Check]:
         present = _module_available(module)
         checks.append(
             Check(
-                f"extra {extra}: {module}",
+                f"extra {extra}: {MODULE_LABELS.get(module, module)}",
                 OK if present else WARN,
                 "disponivel" if present else f'ausente (pip install -e ".[{extra}]")',
             )

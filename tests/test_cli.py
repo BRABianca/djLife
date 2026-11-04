@@ -340,7 +340,7 @@ def test_premium_command() -> None:
     assert result.exit_code == 0
     assert "Premium mensal" in result.stdout
     assert "Premium vitalicio" in result.stdout
-    assert "yt-dlp" in result.stdout
+    assert "Download online" in result.stdout
     assert "Licenca" in result.stdout
 
 

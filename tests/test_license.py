@@ -19,7 +19,7 @@ def test_generate_issue_and_verify_license(tmp_path) -> None:
         license_file,
         customer_id="cliente-1",
         plan="lifetime",
-        features=("premium.ytdlp_import",),
+        features=("premium.download",),
         machine_hash_value=machine,
         expires_at=None,
         issuer="bianca",
@@ -44,7 +44,7 @@ def test_license_rejects_wrong_machine(tmp_path) -> None:
         license_file,
         customer_id="cliente-2",
         plan="monthly",
-        features=("premium.ytdlp_import",),
+        features=("premium.download",),
         machine_hash_value="outra-maquina",
         expires_at=None,
     )
@@ -66,7 +66,7 @@ def test_license_rejects_expired_license(tmp_path) -> None:
         license_file,
         customer_id="cliente-3",
         plan="monthly",
-        features=("premium.ytdlp_import",),
+        features=("premium.download",),
         machine_hash_value=license_mod.machine_hash(),
         expires_at=license_mod.utcnow() - timedelta(days=1),
     )
@@ -93,8 +93,8 @@ def test_status_from_paths_reports_missing_files(tmp_path) -> None:
 
 def test_feature_granted_with_wildcard() -> None:
     assert license_mod.feature_granted((license_mod.WILDCARD_FEATURE,), "premium.novo") is True
-    assert license_mod.feature_granted(("premium.ytdlp_import",), "premium.ytdlp_import") is True
-    assert license_mod.feature_granted(("premium.ytdlp_import",), "premium.crates") is False
+    assert license_mod.feature_granted(("premium.download",), "premium.download") is True
+    assert license_mod.feature_granted(("premium.download",), "premium.crates") is False
 
 
 def test_encrypted_private_key_requires_passphrase(tmp_path) -> None:
@@ -109,7 +109,7 @@ def test_encrypted_private_key_requires_passphrase(tmp_path) -> None:
             license_file,
             customer_id="cliente-4",
             plan="lifetime",
-            features=("premium.ytdlp_import",),
+            features=("premium.download",),
             machine_hash_value=None,
             expires_at=None,
         )
@@ -119,7 +119,7 @@ def test_encrypted_private_key_requires_passphrase(tmp_path) -> None:
         license_file,
         customer_id="cliente-4",
         plan="lifetime",
-        features=("premium.ytdlp_import",),
+        features=("premium.download",),
         machine_hash_value=None,
         expires_at=None,
         private_key_password="segredo",

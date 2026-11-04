@@ -1827,7 +1827,7 @@ def premium_cmd(
         "djlife.toml"
     ),
 ) -> None:
-    """Mostra os planos premium planejados e o extra opcional yt-dlp."""
+    """Mostra os planos premium planejados e o extra opcional de download."""
     cfg = config_mod.load_config(config)
     payload = premium.as_payload(cfg)
 
@@ -1890,7 +1890,7 @@ def _print_import_outcomes(outcomes: list[importer.DownloadOutcome], out: Path) 
 def import_cmd(
     urls: Annotated[
         list[str],
-        typer.Argument(help="URLs suportadas pelo yt-dlp (recurso premium)."),
+        typer.Argument(help="URLs suportadas pelo download online (recurso premium)."),
     ],
     config: Annotated[Path, typer.Option("--config", "-c", help="Arquivo de configuracao.")] = Path(
         "djlife.toml"
@@ -1899,16 +1899,16 @@ def import_cmd(
         Path, typer.Option("--out", "-o", help="Diretorio de destino dos downloads.")
     ] = Path("downloads"),
     audio_format: Annotated[
-        str, typer.Option("--format", help="Seletor de formato do yt-dlp.")
+        str, typer.Option("--format", help="Seletor de formato do download.")
     ] = importer.DEFAULT_FORMAT,
     apply: Annotated[
         bool, typer.Option("--apply", help="Baixa de fato; sem isso apenas inspeciona.")
     ] = False,
 ) -> None:
-    """Importa audio online com yt-dlp (recurso premium)."""
+    """Baixa audio online (recurso premium de download)."""
     cfg = config_mod.load_config(config)
     try:
-        premium.require_feature(cfg, premium.YTDLP_IMPORT_FEATURE)
+        premium.require_feature(cfg, premium.DOWNLOAD_FEATURE)
     except premium.PremiumUnavailable as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from exc

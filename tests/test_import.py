@@ -23,7 +23,7 @@ def _licensed_config(tmp_path: Path) -> Path:
         license_file,
         customer_id="cliente-import",
         plan="lifetime",
-        features=(premium.YTDLP_IMPORT_FEATURE,),
+        features=(premium.DOWNLOAD_FEATURE,),
         machine_hash_value=license_mod.machine_hash(),
         expires_at=None,
     )
@@ -95,14 +95,14 @@ def test_import_without_extra_reports_hint(tmp_path, monkeypatch) -> None:
     config = _licensed_config(tmp_path)
 
     def boom():
-        raise importer.ImportUnavailable("yt-dlp nao esta instalado.")
+        raise importer.ImportUnavailable("backend de download nao esta instalado.")
 
-    monkeypatch.setattr(importer, "_ytdlp", boom)
+    monkeypatch.setattr(importer, "_backend", boom)
 
     result = runner.invoke(app, ["import", "https://example.com/x", "--config", str(config)])
 
     assert result.exit_code == 1
-    assert "yt-dlp" in result.stdout
+    assert "download" in result.stdout.lower()
 
 
 def test_import_reports_extractor_failure(tmp_path, monkeypatch) -> None:
@@ -133,7 +133,7 @@ def test_probe_wraps_extractor_errors(monkeypatch) -> None:
         def extract_info(self, url, download=False):
             raise RuntimeError("video indisponivel")
 
-    monkeypatch.setattr(importer, "_ytdlp", lambda: SimpleNamespace(YoutubeDL=FakeYDL))
+    monkeypatch.setattr(importer, "_backend", lambda: SimpleNamespace(YoutubeDL=FakeYDL))
 
     with pytest.raises(importer.ImportFailed):
         importer.probe(["https://example.com/x"])
@@ -141,9 +141,9 @@ def test_probe_wraps_extractor_errors(monkeypatch) -> None:
 
 def test_probe_raises_when_extra_missing(monkeypatch) -> None:
     def boom():
-        raise importer.ImportUnavailable("sem yt-dlp")
+        raise importer.ImportUnavailable("sem backend de download")
 
-    monkeypatch.setattr(importer, "_ytdlp", boom)
+    monkeypatch.setattr(importer, "_backend", boom)
 
     with pytest.raises(importer.ImportUnavailable):
         importer.probe(["https://example.com/x"])

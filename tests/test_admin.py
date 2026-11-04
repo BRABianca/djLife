@@ -74,7 +74,7 @@ def test_issue_registers_and_verifies(tmp_path: Path) -> None:
     status = license_mod.verify_license_file(
         result["path"],
         cfg.license.public_key_path,
-        required_features=(premium.YTDLP_IMPORT_FEATURE,),
+        required_features=(premium.DOWNLOAD_FEATURE,),
     )
     assert status.valid is True
     assert status.machine_match is True
