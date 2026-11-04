@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from djlife import admin, license as license_mod, premium, registry
+from djlife import admin, premium, registry
+from djlife import license as license_mod
 from djlife.config import Config, LicenseConfig
 from djlife.ui import server
 
