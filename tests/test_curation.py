@@ -162,9 +162,9 @@ def test_record_decision_is_idempotent(catalog, tmp_path) -> None:
     curation.record_decision(catalog, track_id, techno)
     curation.record_decision(catalog, track_id, techno)
 
-    total = catalog.execute(
-        "SELECT COUNT(*) FROM track_genres WHERE source = 'manual'"
-    ).fetchone()[0]
+    total = catalog.execute("SELECT COUNT(*) FROM track_genres WHERE source = 'manual'").fetchone()[
+        0
+    ]
     assert total == 1
 
 
