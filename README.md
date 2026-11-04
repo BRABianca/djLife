@@ -106,7 +106,7 @@ djlife license list                             # lista as licenças emitidas (r
 djlife license renew RECORD_ID --days 30        # renova uma licença
 djlife license revoke RECORD_ID                 # marca a licença como revogada
 
-# 10. Importação online com yt-dlp (premium; exige licença)
+# 10. Importação online (download premium; exige licença)
 djlife import "https://..."            # dry-run: lê os metadados
 djlife import "https://..." --apply    # baixa para --out (padrão: downloads/)
 
@@ -143,7 +143,7 @@ Instale apenas o que precisar (a instalação base já cobre o núcleo):
 | `rekordbox` | Ler/relink de `master.db` do Rekordbox 6/7 (beta) | `pip install -e ".[rekordbox]"` |
 | `essentia` | Backend alternativo de análise (Linux/WSL2; sem wheel no Windows) | `pip install -e ".[essentia]"` |
 | `packaging` | Gerar o executável com PyInstaller | `pip install -e ".[packaging]"` |
-| `premium` | Base premium com importação online via `yt-dlp` | `pip install -e ".[premium]"` |
+| `premium` | Base premium com download online (backend `yt-dlp`) | `pip install -e ".[premium]"` |
 | `dev` | Testes, lint e tipagem (pytest/ruff/mypy) | `pip install -e ".[dev]"` |
 
 Exemplo com a camada L3/L4:
@@ -169,9 +169,9 @@ djlife import "https://..." --apply    # baixa o áudio; depois `djlife scan dow
 ```
 
 > A fase atual prepara os planos **mensal** e **vitalício** dentro do app e adiciona o extra
-> opcional `yt-dlp`. A venda/liberação pode ser feita de forma **interpessoal/manual**, sem
-> intermediário neste momento. O comando `djlife import` é o primeiro recurso **premium de
-> fato**: ele consome o gate de licença (`premium.ytdlp_import`) e é bloqueado sem licença
+> opcional de **download**. A venda/liberação pode ser feita de forma **interpessoal/manual**,
+> sem intermediário neste momento. O comando `djlife import` é o primeiro recurso **premium de
+> fato**: ele consome o gate de licença (`premium.download`) e é bloqueado sem licença
 > válida.
 
 ### Licença offline do premium
@@ -258,6 +258,25 @@ escrito no filesystem antes de você revisar o plano.
 
 Pela CLI o fluxo equivalente é `djlife plan` → `djlife apply` → `djlife undo`.
 
+### Download pela interface (aba *premium*)
+
+A aba **premium** expõe o recurso de **download online** sem terminal: cole as URLs, clique em
+*inspecionar* (dry-run que só lê os metadados) e depois em *baixar* para gravar o áudio no
+destino escolhido. Depois do download, rode *varrer pastas* na aba *organizar* para indexar o
+que foi baixado. O painel é habilitado **somente** com licença (`premium.download`), o extra
+`premium` instalado e o `admin_token` informado; sem qualquer um deles, os botões ficam
+bloqueados e a própria aba explica o motivo.
+
+### Curadoria pela interface (aba *premium*)
+
+Ainda na aba **premium**, o recurso **Curadoria assistida** (`premium.assisted_curation`) resolve
+os **conflitos de gênero entre fontes** (tags × regras × embeddings) pela web, sem terminal. A
+tabela mostra cada faixa com o nível do conflito (`divergente`/`ambígua`), os sinais por fonte e a
+sugestão; basta escolher o gênero correto e salvar. A escolha é gravada como decisão **manual**
+(`source='manual'`, precedência máxima em `plan`/`export`/`report`) e realimenta a camada
+`learned`. O painel exige licença com o recurso **e** o `admin_token`; sem eles, as chamadas
+degradam com 403 e a aba mostra o motivo. Ele só **classifica** — não move arquivos.
+
 ---
 
 ## Configuração
@@ -275,7 +294,7 @@ extensions = [".mp3", ".flac", ".wav", ".m4a"]
 ```
 
 Seções disponíveis: `[library]`, `[catalog]`, `[classification]`, `[files]`, `[integrations]`,
-`[analysis]`, `[ml]`. Sem o arquivo, o djLife usa os padrões. Salve em **UTF-8 sem BOM**.
+`[analysis]`, `[ml]`, `[license]`. Sem o arquivo, o djLife usa os padrões. Salve em **UTF-8 sem BOM**.
 
 ---
 

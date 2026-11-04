@@ -585,7 +585,7 @@ produto é *offline-first* e punir o cliente legítimo sem conexão seria pior q
 4. **Expiração opcional** (`expires_at`) validada contra o relógio UTC local; vitalício = `null`.
 5. **Gate de recurso** (`premium.require_feature`): exige licença **válida** *e* o código do
    recurso presente em `features`; a falha levanta `PremiumUnavailable` com o motivo, em vez de
-   liberar em silêncio. O primeiro consumidor é o `djlife import` (`premium.ytdlp_import`).
+   liberar em silêncio. O primeiro consumidor é o `djlife import` (`premium.download`).
 6. **Comandos** `djlife license machine-id | generate-keypair | issue | status`; `djlife doctor`
    audita a presença de chave pública/licença e o veredito; a UI (aba *premium*) mostra o estado.
 7. **Config `[license]`** (`public_key`, `license_file`) com defaults em `user_data_dir("djlife")`.
@@ -837,4 +837,99 @@ originais quebra softwares de DJ, que dependem de **caminhos absolutos**.
   e precisa ser reindexado no software (fora de escopo; coerente com a ADR-0018, que trata
   integrações como beta).
 
+## ADR-0025 — Painel de download premium na UI (emenda à ADR-0013/0020)
+
+**Status:** aceita (2026-11-04)
+
+**Contexto**
+O primeiro recurso premium de fato é o download online (`importer.py` + `djlife import`, ADR-0020),
+gated por `require_feature`. Ele só era acessível pela CLI e a marca do backend de terceiros
+(`yt-dlp`) aparecia na experiência do usuário. O objetivo central do produto é organizar música
+desorganizada **pela UI**; o download alimenta essa trilha (baixa → `djlife scan` → organizar),
+então faltava expor o recurso na aba *premium* sem vazar o nome da biblioteca de terceiros.
+
+**Decisão**
+
+1. **Renomear a marca na experiência**: o recurso passa a se chamar **download** (`Download online`);
+   o código do recurso é `premium.download` (antes `premium.ytdlp_import`) e o comando continua
+   `djlife import`. O **pacote real** `yt-dlp` só permanece onde é dependência técnica
+   (`pyproject.toml`, extra `premium`) e no `doctor` ele é exibido como **backend de download**
+   (não pelo nome do módulo) — nunca aparece como marca ao usuário.
+2. **Painel de captura funcional na aba premium**: colar URLs, **inspecionar** (dry-run, lê só
+   metadados) e **baixar**, com tabela de resultados. O painel reusa `importer.probe`/
+   `importer.download`; a UI não reimplementa download.
+3. **Escrita isolada em `/api/premium/*`**: leitura em `GET premium/status|job`; escrita em
+   `POST premium/probe|download`. É a **quarta** família de rotas de escrita (após `admin`,
+   `setup` e `organize`) e **nova emenda explícita à ADR-0013**.
+4. **Gate duplo (licença + admin)**: as rotas de escrita exigem `X-Admin-Token` (ADR-0021),
+   checagem de **mesma origem** (CSRF) e bind `127.0.0.1`; além disso o recurso só funciona com
+   licença que conceda `premium.download` **e** o backend instalado (extra `premium`). Sem
+   qualquer um deles, as rotas degradam com 403 em vez de falhar em silêncio.
+5. **Tarefas longas compartilhadas**: `ui/jobs.py` extrai o `TaskJob` (thread *daemon* + snapshot +
+   *polling*), antes embutido em `ui/organize.py`, agora reusado por `ui/download.py`. A UI
+   acompanha por `GET premium/job?task=`.
+6. **Destino explícito**: o download grava em `downloads/` por padrão, com destino/formatos
+   escolhidos no painel; a rota valida que o destino não é um arquivo. `probe` não escreve nada.
+
+**Consequências**
+- (+) o recurso premium fica operável e auditável pela UI, sem terminal, alimentando o `scan`;
+- (+) a marca de terceiros sai da experiência do usuário; a dependência técnica continua isolada no
+  extra opcional;
+- (+) `ui/jobs.py` elimina a duplicação do padrão de tarefa longa entre organização e download;
+- (+) mesma postura de segurança das ADR-0021/0023/0024 (token, mesma origem, `127.0.0.1`,
+  dry-run por padrão no `probe`);
+- (−) renomear o código do recurso **invalida licenças já emitidas** com `premium.ytdlp_import`;
+  é preciso reemitir a licença (`djlife license issue ... --features premium.download`);
+- (−) a UI ganha uma **quarta** família de rotas de escrita; como antes, toda nova rota precisa
+  justificativa e as mesmas salvaguardas;
+- (−) a licença `owner` (curinga `*`) continua liberando o recurso sem alteração.
+
+---
+
+## ADR-0026 — Curadoria assistida na UI (recurso premium, emenda à ADR-0013/0019/0022/0025)
+
+**Status:** aceita (2026-11-04)
+
+**Contexto**
+A curadoria humana (Fase 14/ADR-0019) resolve os **conflitos entre fontes** de gênero, e a camada
+`learned` (ADR-0022) realimenta a classificação a partir dessas decisões — mas o fluxo era
+exclusivo da CLI (`djlife review`). Faltava operá-lo **pela UI**, como o download (ADR-0025), sem
+esconder que é um recurso da camada premium. A decisão de curadoria grava em `track_genres`
+(`source='manual'`, precedência máxima) e é uma **escrita no catálogo** — o que reabre a garantia
+de somente leitura da ADR-0013.
+
+**Decisão**
+
+1. **Recurso premium explícito**: a curadoria assistida passa de `planejado` para **`ativo`** com o
+   código `premium.assisted_curation`; o gate é o mesmo `premium.require_feature` (licença válida
+   *e* recurso presente em `features`; a licença `owner` com curinga `*` libera sem trava).
+2. **Backend `ui/curation.py` reusa o núcleo**: `queue_payload` chama `curation.build_queue` +
+   `curation.genre_choices` (fila de conflitos `divergente`/`ambígua`, sugestão e sinais por fonte)
+   e `decide` chama `curation.record_decision` — a UI **não** reimplementa a fila nem a gravação.
+3. **Rotas na família `/api/premium/*`**: leitura `GET premium/curation`; escrita
+   `POST premium/curation` (`{track_id, genre_id, operator?}`). É a mesma família da ADR-0025 —
+   **não** cria uma quinta família de escrita; herda `X-Admin-Token` (ADR-0021), checagem de
+   **mesma origem** (CSRF) e bind `127.0.0.1`.
+4. **Gate duplo e degradação honesta**: sem licença, as rotas respondem 403 (`CurationUnavailable`)
+   e a aba mostra o motivo; entrada inválida (ids não numéricos, gênero inexistente) responde 400
+   (`CurationError`). O catálogo **não** é tocado por nenhuma falha.
+5. **Decisão do usuário vence e realimenta o aprendizado**: a escolha é gravada com
+   `source='manual'` (confiança `A`), vira a classificação primária em `plan`/`export`/`report` e
+   alimenta a tabela `feedback` (schema v5), base da camada `learned` (ADR-0022).
+6. **A curadoria não move arquivos**: a invariante do projeto permanece — a UI só **classifica**;
+   qualquer efeito no filesystem continua passando por `plan`/`apply` (dry-run) da aba *organizar*.
+
+**Consequências**
+- (+) o objetivo do produto (organizar música) fica mais preciso: resolver conflitos de gênero
+  pela UI melhora a projeção de pastas antes do `apply`;
+- (+) fecha o ciclo da ADR-0022 sem terminal — a fila revisável e a decisão manual realimentam o
+  `learned`;
+- (+) nenhuma reimplementação: a UI dirige o mesmo núcleo da CLI (`curation.py`);
+- (+) mesma postura de segurança das ADR-0021/0023/0024/0025 e **sem** nova família de rotas;
+- (−) a UI escreve no catálogo (`track_genres`/`feedback`), não apenas no filesystem/config — é
+  uma terceira natureza de escrita e precisa das mesmas salvaguardas em rotas futuras;
+- (−) a curadoria exige licença que conceda `premium.assisted_curation`; licenças antigas sem esse
+  recurso ficam bloqueadas até reemissão (a `owner` com `*` segue liberada);
+- (−) o volume de conflitos é proporcional ao desacordo entre tags/regras/embeddings — sem
+  embeddings (extras `ml`/`muq`) a fila pode ser pequena.
 
