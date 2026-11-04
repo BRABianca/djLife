@@ -238,6 +238,36 @@ licença expirada/assinada por outra chave/vinculada a outra máquina é rejeita
 é **bloqueado** sem licença válida e, com licença, faz dry-run dos metadados e baixa com `--apply`;
 `pytest` (234 passed)/`ruff`/`mypy` verdes. ✔
 
+## Fase 16 — Edição ADM/owner (aba de controle de usuários) ✅
+
+A dona precisa **gerenciar as licenças emitidas** (emitir, renovar, revogar) sem terminal e
+operar em **modo owner** com tudo liberado. Esta fase adiciona a **aba admin** ao `djlife ui`
+com escrita **isolada** em `/api/admin/*`, gated por token e bind local (ADR-0021, emenda à UI
+somente leitura da ADR-0013).
+
+- [x] `admin.py`: núcleo de administração — `is_enabled`/`require_token`
+      (`hmac.compare_digest`), `status_public`/`status_detail`, `resolve_features`,
+      `default_license_output`, `licenses_payload`, `issue`/`renew`/`revoke`/`activate_owner`
+- [x] `registry.py`: registro **JSON local** independente do catálogo (`REGISTRY_SCHEMA = 1`) com
+      `LicenseRecord`, `effective_status` (`active`/`expired`/`revoked`) e `add/revoke/renew`
+- [x] `license.py`: `OWNER_PLAN` + `WILDCARD_FEATURE` (`*`), `feature_granted`, `parse_expiration`
+      e `generate_keypair`/`load_private_key` com **passphrase** (PKCS#8 `BestAvailableEncryption`)
+- [x] `premium.py`: `owner_features()`/`is_owner()` e gate ciente do curinga (dona sem trava)
+- [x] config `[license]` (`private_key`, `registry_file`, `admin_token`) + defaults
+- [x] comandos `djlife license owner | list | renew | revoke`, `generate-keypair --encrypt` e
+      `issue` reaproveitando `admin.py` (com `--private-key-password`)
+- [x] `ui/server.py`: `POST /api/admin/{issue,renew,revoke}` e `GET /api/admin/{status,licenses}`
+      com gate por token (`X-Admin-Token`); catálogo segue **somente leitura**
+- [x] aba **admin** na UI (`index.html`/`app.js`/`app.css`): banner de aviso, resumo do estado,
+      formulário de emissão e tabela de licenças (renovar/revogar); token em `sessionStorage`
+- [x] `tests/test_admin.py` + casos em `test_license.py` (owner/curinga, passphrase, expiração) e
+      autorização dos endpoints admin
+
+**Critério:** `djlife license owner` instala uma licença `owner` que libera **todos** os recursos;
+`license list/renew/revoke` operam o registro JSON; a aba admin emite/renova/revoga **somente**
+com token válido e recusa sem ele; o catálogo musical permanece intocado; `pytest`
+(251 passed)/`ruff`/`mypy` verdes. ✔
+
 ## Riscos abertos
 
 - **Cues/beatgrids** ao mover arquivos → mitigado por hardlink (Fase 5) e relink (Fase 7).

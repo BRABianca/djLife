@@ -605,3 +605,54 @@ produto é *offline-first* e punir o cliente legítimo sem conexão seria pior q
   core e cobrar por valor/suporte, não por obstáculo técnico (reforça a porta de saída da
   ADR-0001).
 
+---
+
+## ADR-0021 — Edição ADM/owner com aba de controle de usuários (emenda à UI somente leitura)
+
+**Status:** aceita (2026-11-04)
+
+**Contexto**
+A ADR-0013 fixou a interface web como **somente leitura**, sem escrita no catálogo nem no
+filesystem. A dona (ADM) precisa, porém, **gerenciar as licenças emitidas** (emitir, renovar e
+revogar) sem voltar ao terminal, e operar o produto em **modo owner** com **todos os recursos
+liberados** (sem trava premium). Isso introduz a primeira escrita vinda da UI e precisa ser
+contida para não violar a garantia de segurança da interface.
+
+**Decisão**
+
+1. **Escrita isolada em `/api/admin/*`**: as únicas rotas de escrita são `POST
+   /api/admin/issue`, `POST /api/admin/renew` e `POST /api/admin/revoke`. O catálogo musical
+   continua **somente leitura** — o admin escreve apenas o **registro JSON de licenças** e
+   arquivos de licença, nunca o banco de músicas nem o filesystem da biblioteca.
+2. **Gate por token**: toda rota admin exige o header `X-Admin-Token` (ou `token` no body),
+   comparado com `hmac.compare_digest` contra `[license].admin_token`. Sem token configurado a
+   administração fica **desabilitada** (`AdminUnavailable`); `GET /api/admin/status` é público e
+   expõe apenas `{enabled, owner}`, sem caminhos ou dados sensíveis (os detalhes — `registry_path`,
+   chaves — só saem em `GET /api/admin/licenses`, autenticado).
+3. **Bind local**: emenda explícita à ADR-0013 — o servidor segue em `127.0.0.1` por padrão; a
+   escrita admin só é alcançável de dentro da máquina.
+4. **Modo owner (licença própria)**: `djlife license owner` emite uma licença `plan = owner` com
+   `features = ("*",)` (curinga `WILDCARD_FEATURE`); `premium.is_owner` e
+   `license.feature_granted` liberam **todos** os recursos. Não há trava premium para a dona.
+5. **Chave privada cifrada**: `generate-keypair`/`owner` cifram a chave privada (PKCS#8,
+   `BestAvailableEncryption`) com uma passphrase solicitada por sessão (`typer.prompt`
+   `hide_input`); a chave privada **nunca** entra no binário nem no repositório.
+6. **Registro local JSON**: as licenças emitidas são indexadas em um JSON independente do
+   catálogo (`registry.py`, `REGISTRY_SCHEMA = 1`), com `effective_status`
+   (`active`/`expired`/`revoked`) derivado da expiração e do próprio registro.
+7. **Comandos**: `djlife license owner | list | renew | revoke`, além de `issue` reaproveitando o
+   mesmo núcleo de `admin.py` — a CLI e a aba admin operam sobre o mesmo registro.
+
+**Consequências**
+- (+) a dona gerencia licenças pela UI, sem terminal, mantendo o catálogo musical intocado;
+- (+) o gate por token + bind `127.0.0.1` contém o risco da primeira escrita vinda da web;
+- (+) o modo owner centraliza "acesso total" numa única licença assinada, em vez de flags no
+  código;
+- (+) a chave privada cifrada eleva o custo de vazamento/uso indevido na máquina da dona;
+- (−) **revogação offline não é DRM**: marcar um registro como `revoked` não desliga uma licença
+  já entregue ao cliente (o app só verifica a assinatura). O texto de `admin.ADMIN_NOTE` deixa
+  isso explícito — a revogação vale para o **registro da dona**, não como controle remoto;
+- (−) a UI deixa de ser estritamente somente leitura; qualquer nova rota de escrita precisa ser
+  explicitamente justificada e submetida às mesmas salvaguardas (token, `127.0.0.1`, isolamento
+  do catálogo).
+
