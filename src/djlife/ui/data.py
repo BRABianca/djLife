@@ -70,9 +70,9 @@ COMMANDS: tuple[dict[str, str], ...] = (
     {
         "name": "import",
         "usage": "djlife import URL... [--out DIR] [--format F] [--apply]",
-        "summary": "Importa audio online com yt-dlp (recurso premium, exige licenca).",
+        "summary": "Importa audio online (recurso premium de download, exige licenca).",
         "detail": "Dry-run por padrao (le metadados); com --apply baixa para --out e sugere"
-        " `djlife scan`. Bloqueado sem licenca valida com o recurso premium.ytdlp_import.",
+        " `djlife scan`. Bloqueado sem licenca valida com o recurso premium.download.",
     },
     {
         "name": "scan",

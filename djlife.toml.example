@@ -1,7 +1,5 @@
-schema_version = 4
-
 [library]
-# Raízes varridas pelo scanner.
+# Raízes varridas pelo scanner. Deixe [] para abrir o onboarding na primeira execução.
 roots = ["D:/Music"]
 extensions = ["mp3", "flac", "m4a", "aiff", "wav", "ogg", "opus"]
 follow_symlinks = false
@@ -59,3 +57,14 @@ window_seconds = 30.0
 # k-NN: vizinhos considerados e similaridade mínima de cosseno.
 neighbors = 10
 min_similarity = 0.6
+
+[license]
+# Chave pública usada para verificar a licença (vazio = padrão do pacote).
+public_key = ""
+# Licença instalada nesta máquina (vazio = padrão do diretório de dados).
+license_file = ""
+# Registro local das licenças emitidas (usado pelo ADM).
+registry_file = ""
+# Passphrase que habilita as abas "admin" e "organizar" na UI.
+# Sem ela, as duas abas ficam ocultas — defina uma para testar o fluxo de organização.
+admin_token = ""

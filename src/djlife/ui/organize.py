@@ -3,46 +3,25 @@
 Encadeia varredura, classificacao, plano (dry-run), auditoria item a item,
 aplicacao com journal e reversao. Somente `apply` e `undo` escrevem no
 filesystem; ambos exigem o token de administracao e sao registrados no journal
-para permitir desfazer. A varredura reaproveita `setup.ScanJob`.
+para permitir desfazer. A varredura reaproveita `setup.ScanJob`; as tarefas
+longas usam `jobs.TaskJob`.
 """
 
 from __future__ import annotations
 
 import sqlite3
 import threading
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from djlife import apply as apply_mod
 from djlife import classifier, db, planner, taxonomy
 from djlife.config import FILE_STRATEGIES, Config
+from djlife.ui.jobs import TaskJob
 
 
 class OrganizeError(RuntimeError):
     """Falha no fluxo de organizacao (configuracao ausente ou catalogo inacessivel)."""
-
-
-@dataclass
-class TaskJob:
-    """Andamento de uma tarefa longa disparada pela interface."""
-
-    task: str
-    status: str = "running"
-    message: str | None = None
-    result: dict[str, Any] = field(default_factory=dict)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "task": self.task,
-            "status": self.status,
-            "message": self.message,
-            "result": dict(self.result),
-        }
-
-
-def idle_snapshot(task: str) -> dict[str, Any]:
-    return {"task": task, "status": "idle", "message": None, "result": {}}
 
 
 def _open(cfg: Config) -> sqlite3.Connection:

@@ -218,14 +218,14 @@ Camada paga (planos **mensal**/**vitalício**) liberada por venda **interpessoal
 local assinada e verificação **offline** (ADR-0020). A chave privada fica fora do produto; o app
 embute apenas a chave pública.
 
-- [x] `premium.py`: catálogo de planos e recursos (yt-dlp, curadoria assistida, crates) +
+- [x] `premium.py`: catálogo de planos e recursos (download, curadoria assistida, crates) +
       `require_feature` como **gate** (licença válida *e* recurso presente em `features`)
 - [x] `license.py`: assinatura **Ed25519**, claims canônicos, `machine_hash()`, expiração e
       `LicenseStatus`/`status_payload`
 - [x] comandos `djlife license machine-id | generate-keypair | issue | status`
-- [x] `importer.py` + comando `djlife import` (`yt-dlp`, import tardio): **primeiro recurso
-      premium de fato** — consome `require_feature` (`premium.ytdlp_import`) e separa os vídeos
-      baixados por item (falhas não interrompem o lote); dry-run por padrão
+- [x] `importer.py` + comando `djlife import` (backend de download, import tardio): **primeiro
+      recurso premium de fato** — consome `require_feature` (`premium.download`) e separa os
+      vídeos baixados por item (falhas não interrompem o lote); dry-run por padrão
 - [x] extra `premium` (`yt-dlp`) em `pyproject.toml` e `cryptography` no núcleo
 - [x] config `[license]` (`public_key`, `license_file`) + auditoria no `doctor` e estado na UI
       (aba *premium*)
@@ -348,6 +348,51 @@ ao vivo; com raiz já configurada o app abre direto na visão geral; `ruff`/`myp
 → aplicar selecionados → ver o lote no histórico → desfazer; destino/estratégia configuráveis sem
 tocar em terminal; `ruff`/`mypy`/`pytest` (287 passed) verdes. ✔
 
+## Fase 20 — Painel de download premium na UI ✅
+
+> Spec: **ADR-0025** (emenda à ADR-0013/0020). Expõe o primeiro recurso premium (download online)
+> na aba *premium*, sem terminal e sem exibir a marca do backend de terceiros.
+
+- [x] renomear a marca: recurso `premium.download` (antes `premium.ytdlp_import`), rótulo
+      **Download online**; o pacote real `yt-dlp` fica restrito a dependência/`doctor`
+- [x] `ui/jobs.py`: extrai o `TaskJob` compartilhado (thread daemon + snapshot) de `ui/organize.py`
+- [x] `ui/download.py`: painel premium — `status`, `start_probe` (dry-run), `start_download`
+- [x] `ui/server.py`: quarta família de escrita isolada em `/api/premium/*`
+      (`probe`/`download` + leitura `status`/`job`), gated por `X-Admin-Token`, mesma origem (CSRF)
+      e bind em `127.0.0.1`; gate de licença (`premium.download`) + backend instalado
+- [x] aba **premium** (`index.html`/`app.css`/`app.js`): colar URLs, inspecionar, baixar, com
+      tabela de resultados e console de tarefa
+- [x] `tests/test_download_ui.py`: gate de licença/token, dry-run × download e rotas HTTP
+- [x] `docs/decisoes.md`: ADR-0025
+
+**Critério:** com licença (`premium.download`) + backend + token, o painel inspeciona as URLs
+(dry-run) e baixa o áudio para o destino, sugerindo `djlife scan`; sem licença/backend/token as
+rotas degradam com 403 e a aba mostra o motivo; `ruff`/`mypy`/`pytest` (297 passed) verdes. ✔
+
+## Fase 21 — Curadoria assistida na UI (recurso premium) ✅
+
+> Spec: **ADR-0026** (emenda à ADR-0013/0019/0022/0025). Leva a curadoria humana
+> (Fase 14) para a aba *premium*, resolvendo os conflitos de gênero pela web e
+> realimentando a camada `learned`.
+
+- [x] `premium.py`: recurso `premium.assisted_curation` (**Curadoria assistida**) marcado
+      `ativo` (antes `planejado`)
+- [x] `ui/curation.py`: painel premium — `queue_payload` (fila + gêneros) e `decide`
+      (grava decisão manual), reusando `curation.build_queue`/`record_decision`
+- [x] `ui/server.py`: rotas na quarta família `/api/premium/*` — leitura `GET premium/curation`,
+      escrita `POST premium/curation` (gate de licença + `X-Admin-Token`; 403 sem licença,
+      400 em entrada inválida)
+- [x] aba **premium** (`index.html`/`app.css`/`app.js`): seção *curadoria* com fila de
+      conflitos (nível, sinais por fonte, sugestão) e seleção de gênero por faixa
+- [x] `tests/test_curation_ui.py`: gate de licença por recurso, fila, decisão manual e
+      rotas HTTP (autorização, entrada inválida)
+- [x] `docs/decisoes.md`: ADR-0026
+
+**Critério:** com licença (`premium.assisted_curation`) + token, a aba premium lista os conflitos
+e grava a escolha do usuário como `source='manual'` (precedência máxima), que realimenta a camada
+`learned`; sem licença as rotas degradam com 403 e a aba mostra o motivo; `ruff`/`mypy`/`pytest`
+(306 passed) verdes. ✔
+
 ## Riscos abertos
 
 - **Cues/beatgrids** ao mover arquivos → mitigado por hardlink (Fase 5) e relink (Fase 7).
@@ -357,5 +402,6 @@ tocar em terminal; `ruff`/`mypy`/`pytest` (287 passed) verdes. ✔
   offline-first; Discogs `styles` como fonte principal.
 - **Exposição de caminhos locais pela interface** → servidor escuta em `127.0.0.1` por padrão,
   sem dependências externas (nada sai da máquina). As escritas vindas da UI ficam isoladas em
-  `/api/setup/*` (ADR-0023, configuração), `/api/organize/*` (ADR-0024, filesystem + journal) e
-  `/api/admin/*` (ADR-0021, registro de licenças), todas gated por token/CSRF quando aplicável.
+  `/api/setup/*` (ADR-0023, configuração), `/api/organize/*` (ADR-0024, filesystem + journal),
+  `/api/admin/*` (ADR-0021, registro de licenças) e `/api/premium/*` (ADR-0025/0026, download e
+  curadoria), todas gated por token/CSRF quando aplicável.

@@ -1,7 +1,7 @@
-"""Ingestao online com yt-dlp (recurso premium).
+"""Download online (recurso premium).
 
-O `yt_dlp` e importado tardiamente: sem o extra `premium` instalado, os
-comandos degradam para `ImportUnavailable` em vez de quebrar o nucleo.
+O backend de download e importado tardiamente: sem o extra `premium` instalado,
+os comandos degradam para `ImportUnavailable` em vez de quebrar o nucleo.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ OUTPUT_TEMPLATE = "%(title)s [%(id)s].%(ext)s"
 
 
 class ImportUnavailable(RuntimeError):
-    """O backend de importacao (yt-dlp) nao esta instalado."""
+    """O backend de download (extra `premium`) nao esta instalado."""
 
 
 class ImportFailed(RuntimeError):
-    """O yt-dlp nao conseguiu ler os metadados de uma URL."""
+    """Nao foi possivel ler os metadados de uma URL."""
 
 
 @dataclass(frozen=True)
@@ -41,20 +41,20 @@ class DownloadOutcome:
     message: str
 
 
-def _ytdlp() -> Any:
+def _backend() -> Any:
     try:
         import yt_dlp
     except ImportError as exc:
         raise ImportUnavailable(
-            f"yt-dlp nao esta instalado. Instale o extra premium: {INSTALL_HINT}"
+            f"backend de download nao esta instalado. Instale o extra premium: {INSTALL_HINT}"
         ) from exc
     return yt_dlp
 
 
 def available() -> bool:
-    """Indica se o extra `premium` (yt-dlp) esta disponivel no ambiente."""
+    """Indica se o backend de download (extra `premium`) esta disponivel no ambiente."""
     try:
-        _ytdlp()
+        _backend()
     except ImportUnavailable:
         return False
     return True
@@ -74,10 +74,10 @@ def _candidate(url: str, info: dict[str, Any]) -> ImportCandidate:
 
 def probe(urls: Sequence[str]) -> list[ImportCandidate]:
     """Le os metadados das URLs sem baixar (base do dry-run)."""
-    yt_dlp = _ytdlp()
+    backend = _backend()
     options: dict[str, Any] = {"quiet": True, "no_warnings": True, "skip_download": True}
     candidates: list[ImportCandidate] = []
-    with yt_dlp.YoutubeDL(options) as ydl:
+    with backend.YoutubeDL(options) as ydl:
         for url in urls:
             try:
                 info: dict[str, Any] = ydl.extract_info(url, download=False)
@@ -93,8 +93,8 @@ def download(
     target_dir: Path | str,
     audio_format: str = DEFAULT_FORMAT,
 ) -> list[DownloadOutcome]:
-    """Baixa o audio das URLs para `target_dir` usando yt-dlp."""
-    yt_dlp = _ytdlp()
+    """Baixa o audio das URLs para `target_dir` usando o backend de download."""
+    backend = _backend()
     out_dir = Path(target_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     options: dict[str, Any] = {
@@ -104,7 +104,7 @@ def download(
         "outtmpl": str(out_dir / OUTPUT_TEMPLATE),
     }
     outcomes: list[DownloadOutcome] = []
-    with yt_dlp.YoutubeDL(options) as ydl:
+    with backend.YoutubeDL(options) as ydl:
         for url in urls:
             try:
                 info: dict[str, Any] = ydl.extract_info(url, download=True)

@@ -56,7 +56,7 @@
                  └────────────┘
                         │
                  ┌────────────┐
-                 │  premium   │──▶ planos mensal/vitalicio · extras pagos opcionais (yt-dlp)
+                 │  premium   │──▶ planos mensal/vitalicio · extras pagos (download, curadoria)
                  └────────────┘
                         │
                  ┌────────────┐
@@ -161,7 +161,7 @@ djlife status     → integridade dos bancos DJ (itens que resolvem p/ arquivos 
 djlife relink     → reposiciona paths nos bancos DJ (dry-run por padrão; `--apply`)
 djlife export     → playlists M3U8 por gênero/subgênero a partir do catálogo (dry-run; `--apply`)
 djlife license    → gera chaves, emite/renova/revoga licenças, modo owner e valida a ativação offline
-djlife import     → ingestão online via yt-dlp (premium; gate de licença; dry-run por padrão)
+djlife import     → download online (premium; gate de licença; dry-run por padrão)
 djlife doctor     → auditoria somente-leitura do ambiente e do catálogo
 djlife ui         → sobe a interface web local em `127.0.0.1` (catálogo só leitura; admin por token)
 djlife report     → exporta CSV/JSON + estatísticas
@@ -199,14 +199,18 @@ dependências novas e sem build de frontend (ADR-0013).
 | Camada | Arquivo | Papel |
 |---|---|---|
 | Dados | `ui/data.py` | leituras do catálogo → JSON (`overview`, `tracks`, `duplicates`, `versions`, `integrations`, `capabilities`) |
-| Servidor | `ui/server.py` | `ThreadingHTTPServer` (stdlib): assets em `ui/assets` + endpoints `/api/*` (leitura), `/api/setup/*` e `/api/organize/*` (escrita, gated por token) e `/api/admin/*` |
+| Servidor | `ui/server.py` | `ThreadingHTTPServer` (stdlib): assets em `ui/assets` + endpoints `/api/*` (leitura), `/api/setup/*`, `/api/organize/*` e `/api/premium/*` (escrita, gated por token) e `/api/admin/*` |
 | Onboarding | `ui/setup.py` | navegação de pastas, `library.roots` no TOML, `ScanJob`/`start_scan` e `[files]` (destino/estratégia) |
+| Tarefas longas | `ui/jobs.py` | `TaskJob` compartilhado (thread *daemon* + `snapshot()` + *polling*) |
 | Organização | `ui/organize.py` | encadeia o núcleo (`classifier`/`planner`/`apply`) em `TaskJob` para a aba *organizar* |
+| Download | `ui/download.py` | painel premium: `importer.probe`/`importer.download` em `TaskJob` na aba *premium* |
+| Curadoria | `ui/curation.py` | painel premium: fila de conflitos (`curation.build_queue`) e decisão manual (`curation.record_decision`) na aba *premium* |
 | Admin | `admin.py` (via servidor) | emitir/renovar/revogar licenças no registro JSON; modo owner |
 | Assets | `ui/assets/` | `index.html`, `app.css`, `app.js` (Tech-Noir / luxo sombrio) |
 
 Endpoints de leitura: `/api/overview`, `/api/tracks?q=&limit=`, `/api/duplicates`, `/api/versions`,
-`/api/integrations`, `/api/capabilities`, `/api/version`, `/api/organize/{status,plan,history,job}`.
+`/api/integrations`, `/api/capabilities`, `/api/version`, `/api/organize/{status,plan,history,job}`,
+`/api/premium/{status,job,curation}`.
 
 Endpoints de administração: `GET /api/admin/status` (público: `{enabled, owner}`),
 `GET /api/admin/licenses` (autenticado: detalhes + lista) e `POST /api/admin/{issue,renew,revoke}`.
@@ -222,8 +226,8 @@ O catálogo musical é **somente leitura** para consulta: abre conexões efêmer
 `127.0.0.1` por padrão, resolvendo assets com bloqueio de travessia de diretório. As escritas
 vindas da UI ficam **isoladas por família de rota** (todas com bloqueio de mesma origem/CSRF):
 `/api/admin/*` (registro JSON de licenças, ADR-0021), `/api/setup/*` (configuração
-`library.roots`/`[files]`, ADR-0023) e `/api/organize/*` (organização no filesystem + journal,
-ADR-0024).
+`library.roots`/`[files]`, ADR-0023), `/api/organize/*` (organização no filesystem + journal,
+ADR-0024) e `/api/premium/*` (download online e curadoria assistida, ADR-0025/0026).
 
 ## 7.1 Licenciamento offline do premium
 
@@ -263,6 +267,36 @@ undo` roda pela web, em **modo owner/admin**, sem sair do navegador.
   `config.update_files_settings` + `POST /api/setup/files` (exige token), com edição cirúrgica do
   TOML que preserva comentários e demais seções.
 
+## 7.3 Painel de download premium (aba *premium*)
+
+Expõe o primeiro recurso premium — o download online — na UI (ADR-0025), alimentando a trilha de
+organização (`baixar → djlife scan → organizar`) sem terminal e sem expor a marca do backend.
+
+- `ui/download.py` reusa `importer.probe`/`importer.download` em `TaskJob` (`ui/jobs.py`); a UI
+  acompanha por *polling* em `/api/premium/job?task=`.
+- **Escrita isolada** em `/api/premium/*`: `POST {probe,download}` (gated por `X-Admin-Token` +
+  mesma origem) e leituras `GET {status,job}`.
+- **Gate duplo**: exige licença com `premium.download` **e** o backend instalado (extra `premium`);
+  sem qualquer um deles, `probe`/`download` retornam 403 e a aba mostra o motivo.
+- **Dry-run por padrão**: `probe` lê só metadados (não escreve nada); `download` grava em
+  `downloads/` (destino/formatos configuráveis no painel) e sugere `djlife scan`.
+
+## 7.4 Curadoria assistida premium (aba *premium*)
+
+Leva a curadoria humana (Fase 14/ADR-0019) para a UI como recurso premium (ADR-0026): resolve os
+**conflitos de gênero entre fontes** pela web e realimenta a camada `learned` (ADR-0022).
+
+- `ui/curation.py` reusa o núcleo: `curation.build_queue` + `curation.genre_choices` (fila
+  `divergente`/`ambígua` com sugestão e sinais por fonte) e `curation.record_decision`
+  (`source='manual'`, confiança `A`); a UI não reimplementa a fila nem a gravação.
+- **Escrita isolada** em `/api/premium/*`: `POST premium/curation` (`{track_id, genre_id,
+  operator?}`) + leitura `GET premium/curation` — mesma família do download, com `X-Admin-Token`
+  e bloqueio de mesma origem.
+- **Gate duplo**: exige licença com `premium.assisted_curation` e token admin; sem licença as
+  rotas retornam 403 e a aba mostra o motivo; entrada inválida retorna 400.
+- **Não move arquivos**: a decisão é somente classificação (`track_genres` + `feedback`); o efeito
+  físico continua na aba *organizar* (`plan`/`apply` com dry-run).
+
 ## 8. Performance
 
 - `os.scandir` (não `os.walk`) + prefixo `\\?\` para paths longos no Windows;
@@ -300,7 +334,7 @@ Os embeddings exigem o extra `ml` (`pip install -e ".[ml]"`, CLAP/MERT) — ou o
 ```
 djLife/
 ├── pyproject.toml          # hatchling, src layout, entrypoint `djlife`
-├── djlife.toml.example     # config: roots, catalog, classification, files, integrations
+├── djlife.toml.example     # config: roots, catalog, classification, files, integrations, ml, license
 ├── genres.local.yaml.example
 ├── packaging/              # spec do PyInstaller (onedir)
 ├── docs/                   # concepcão, arquitetura, roadmap, decisões
@@ -326,11 +360,11 @@ djLife/
 │   ├── license.py          # Ed25519: chaves, claims canônicos, machine_hash, expiração
 │   ├── registry.py         # registro JSON local de licenças (active/expired/revoked)
 │   ├── admin.py            # admin: emitir/renovar/revogar + gate por token (aba admin)
-│   ├── importer.py         # ingestão online via yt-dlp (premium; dry-run por padrão)
+│   ├── importer.py         # download online (premium; dry-run por padrão)
 │   ├── analysis/           # backends de análise: base, camelot, librosa_backend, essentia_backend, runner
 │   ├── ml/                 # embeddings (L3/L4): base, vectors, clap/mert/muq_backend, runner, neighbors
 │   ├── integrations/       # Rekordbox/Serato: base, leitura + relink (beta)
-│   ├── ui/                 # interface web local: data.py, server.py, setup.py, organize.py, assets/
+│   ├── ui/                 # interface web local: data.py, server.py, jobs.py, setup.py, organize.py, download.py, assets/
 │   └── cli.py              # Typer app
 └── tests/
 ```
@@ -338,7 +372,7 @@ djLife/
 ## 11. Empacotamento
 
 Distribuição **PyInstaller onedir** (extra `packaging`), núcleo Python puro — roda sem Python nem
-venv (ADR-0016). Com o extra opcional `premium` instalado (yt-dlp), o bundle fica em ~42 MB;
+venv (ADR-0016). Com o extra opcional `premium` instalado (backend de download), o bundle fica em ~42 MB;
 sem ele, ~24 MB.
 
 ```

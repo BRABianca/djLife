@@ -479,7 +479,7 @@ async function loadPremium() {
 
   $("#premium-install").innerHTML = `
     <div class="safe-item">
-      <div class="safe-title">Extra opcional yt-dlp</div>
+      <div class="safe-title">Extra opcional de download</div>
       <div class="safe-detail">Instalacao: <code>${esc(premium.install)}</code></div>
     </div>
     <div class="safe-item">
@@ -491,11 +491,311 @@ async function loadPremium() {
       <div class="safe-detail">Valida: ${license.valid ? "sim" : "nao"} · motivo: ${esc(license.reason || "-")} · plano: ${esc(license.plan || "-")} · cliente: ${esc(license.customer_id || "-")}</div>
     </div>
   `;
+
+  await loadDownloadPanel();
+  await loadCurationPanel();
+}
+
+const DOWNLOAD_TASK_LABELS = {
+  probe: "inspecao de URLs",
+  download: "download de audio",
+};
+
+const DOWNLOAD_RESULT_LABELS = {
+  count: "candidatos",
+  total: "total",
+  ok: "baixados",
+  errors: "erros",
+  target: "destino",
+  scan_hint: "proximo passo",
+};
+
+const DOWNLOAD = { timer: null };
+
+function downloadBusy(busy) {
+  ["#download-probe", "#download-start"].forEach((selector) => {
+    const el = $(selector);
+    if (el) el.disabled = busy;
+  });
+}
+
+function fillDownloadFormats(formats) {
+  const select = $("#download-format");
+  if (select.dataset.filled || !formats || !formats.length) return;
+  select.innerHTML = formats
+    .map((name) => `<option value="${esc(name)}">${esc(name)}</option>`)
+    .join("");
+  select.dataset.filled = "1";
+}
+
+function renderDownloadTable(task, items) {
+  const head = $("#download-table thead");
+  const body = $("#download-table tbody");
+  if (task === "download") {
+    head.innerHTML = "<tr><th>url</th><th>arquivo</th><th>status</th></tr>";
+    body.innerHTML = items && items.length
+      ? items
+          .map(
+            (item) => `<tr>
+        <td class="mono" title="${esc(item.url)}">${esc(shorten(item.url, 46))}</td>
+        <td class="mono" title="${esc(item.path || "")}">${esc(item.path ? shorten(item.path, 46) : "-")}</td>
+        <td>${
+          item.ok
+            ? '<span class="badge ok">baixado</span>'
+            : `<span class="badge fail">${esc(item.message || "erro")}</span>`
+        }</td>
+      </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="3" class="empty">sem resultados ainda</td></tr>`;
+    return;
+  }
+  head.innerHTML = "<tr><th>titulo</th><th>canal</th><th>duracao</th><th>formato</th></tr>";
+  body.innerHTML = items && items.length
+    ? items
+        .map(
+          (item) => `<tr>
+        <td>${esc(item.title || "-")}</td>
+        <td>${esc(item.uploader || "-")}</td>
+        <td class="num">${item.duration ? `${num(Math.round(item.duration))}s` : "-"}</td>
+        <td><span class="badge muted">${esc(item.ext || "-")}</span></td>
+      </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="4" class="empty">sem resultados ainda</td></tr>`;
+}
+
+function renderDownloadJob(job) {
+  const panel = $("#download-job");
+  if (!job || !job.status || job.status === "idle") {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  $("#download-job-label").textContent = DOWNLOAD_TASK_LABELS[job.task] || job.task || "download";
+
+  const chip = $("#download-job-status");
+  chip.textContent = ORGANIZE_STATUS_LABELS[job.status] || job.status;
+  chip.className = `chip signal ${
+    job.status === "running" ? "warn" : job.status === "done" ? "ok" : job.status === "error" ? "fail" : ""
+  }`.trim();
+
+  const result = job.result || {};
+  const rows = Object.entries(result)
+    .filter(([key]) => key !== "items")
+    .map(
+      ([key, value]) => `<div class="kv-row">
+        <span>${esc(DOWNLOAD_RESULT_LABELS[key] || key)}</span>
+        <span>${organizeResultValue(value)}</span>
+      </div>`
+    )
+    .join("");
+  const note = job.message ? `<div class="org-note">${esc(job.message)}</div>` : "";
+  $("#download-job-body").innerHTML = rows
+    ? `<div class="kv org-kv">${rows}</div>${note}`
+    : note || `<div class="empty">sem detalhes</div>`;
+  renderDownloadTable(job.task, result.items);
+}
+
+function pollDownloadJob(task) {
+  window.clearTimeout(DOWNLOAD.timer);
+  DOWNLOAD.timer = window.setTimeout(async () => {
+    let job = null;
+    try {
+      job = await api(`/api/premium/job?task=${encodeURIComponent(task)}`);
+    } catch (err) {
+      showBanner(`Falha ao consultar o download: ${err.message}`);
+    }
+    if (job) renderDownloadJob(job);
+    if (job && job.status === "running") {
+      pollDownloadJob(task);
+      return;
+    }
+    downloadBusy(false);
+  }, 1000);
+}
+
+async function startDownloadTask(task) {
+  const urls = $("#download-urls").value.trim();
+  if (!urls) {
+    showBanner("cole ao menos uma URL");
+    return;
+  }
+  downloadBusy(true);
+  renderDownloadJob({ task, status: "running", result: {} });
+  try {
+    showBanner("");
+    const body = { urls };
+    if (task === "download") {
+      body.target = $("#download-target").value.trim();
+      body.format = $("#download-format").value;
+    }
+    const job = await adminFetch(`/api/premium/${task}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    renderDownloadJob(job);
+    pollDownloadJob(task);
+  } catch (err) {
+    downloadBusy(false);
+    showBanner(`Falha em ${DOWNLOAD_TASK_LABELS[task] || task}: ${err.message}`);
+  }
+}
+
+async function loadDownloadPanel() {
+  const panel = $("#premium-download");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  const notice = $("#download-notice");
+  const gate = $("#download-gate");
+  const consoleEl = $("#download-console");
+
+  let state;
+  try {
+    state = await api("/api/premium/status");
+  } catch (err) {
+    notice.textContent = `Painel de download indisponivel: ${err.message}`;
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+
+  $("#download-state").textContent = state.ready ? "pronto" : "bloqueado";
+
+  if (!state.licensed) {
+    notice.textContent = `Download bloqueado: ${state.reason || "licenca sem o recurso premium.download"}.`;
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+  if (!state.backend_available) {
+    notice.textContent = `Backend de download ausente — instale o extra premium: ${state.install}`;
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+
+  notice.textContent = "Recurso liberado: cole as URLs, inspecione (dry-run) e baixe para o destino.";
+  const adminStatus = await api("/api/admin/status");
+  if (!adminStatus.enabled) {
+    notice.textContent += " Defina [license] admin_token para habilitar o download pela UI.";
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+  if (!adminToken()) {
+    gate.classList.remove("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+
+  gate.classList.add("hidden");
+  consoleEl.classList.remove("hidden");
+  const target = $("#download-target");
+  if (!target.value) target.value = state.default_target || "downloads";
+  fillDownloadFormats(state.formats);
+}
+
+const CURATION = { choices: [] };
+
+function curationOptionsHtml(selected) {
+  return CURATION.choices
+    .map(
+      (choice) =>
+        `<option value="${choice.genre_id}"${choice.genre_id === selected ? " selected" : ""}>${esc(choice.label)}</option>`
+    )
+    .join("");
+}
+
+function renderCurationTable(items) {
+  const body = $("#curation-table tbody");
+  const rows = items || [];
+  $("#curation-count").textContent = `${rows.length} pendente${rows.length === 1 ? "" : "s"}`;
+  body.innerHTML = rows.length
+    ? rows
+        .map((item) => {
+          const signals = item.signals
+            .map((s) => `<span class="badge muted">${esc(s.source)}: ${esc(s.label)}</span>`)
+            .join(" ");
+          const level =
+            item.level === "divergente"
+              ? '<span class="badge fail">divergente</span>'
+              : '<span class="badge warn">ambigua</span>';
+          return `<tr>
+        <td><div class="curation-title">${esc(item.title || "-")}</div><div class="curation-sub">${esc(item.artist || "")}</div></td>
+        <td>${level}</td>
+        <td class="curation-signals">${signals}</td>
+        <td><select class="curation-choice" data-track="${item.track_id}">${curationOptionsHtml(item.suggestion.genre_id)}</select></td>
+        <td><button type="button" class="btn curation-save" data-track="${item.track_id}">gravar</button></td>
+      </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" class="empty">sem conflitos pendentes</td></tr>`;
+}
+
+async function loadCurationPanel() {
+  const panel = $("#premium-curation");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  const notice = $("#curation-notice");
+  const gate = $("#curation-gate");
+  const consoleEl = $("#curation-console");
+
+  let payload;
+  try {
+    payload = await api("/api/premium/curation");
+  } catch (err) {
+    notice.textContent = `Curadoria indisponivel: ${err.message}`;
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+
+  $("#curation-state").textContent = payload.ready ? "pronto" : "bloqueado";
+  CURATION.choices = payload.choices || [];
+
+  if (!payload.licensed) {
+    notice.textContent = `Curadoria bloqueada: ${payload.reason || "licenca sem o recurso premium.assisted_curation"}.`;
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+  notice.textContent = "Recurso liberado: revise os conflitos e grave a decisao de genero.";
+  const adminStatus = await api("/api/admin/status");
+  if (!adminStatus.enabled) {
+    notice.textContent += " Defina [license] admin_token para gravar decisoes pela UI.";
+    gate.classList.add("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+  if (!adminToken()) {
+    gate.classList.remove("hidden");
+    consoleEl.classList.add("hidden");
+    return;
+  }
+  gate.classList.add("hidden");
+  consoleEl.classList.remove("hidden");
+  renderCurationTable(payload.items);
+}
+
+async function saveCurationDecision(trackId) {
+  const select = $(`.curation-choice[data-track="${trackId}"]`);
+  if (!select) return;
+  try {
+    showBanner("");
+    const result = await adminFetch("/api/premium/curation", {
+      method: "POST",
+      body: JSON.stringify({ track_id: Number(trackId), genre_id: Number(select.value) }),
+    });
+    await loadCurationPanel();
+    showBanner(`Decisao gravada (source=manual). Conflitos pendentes: ${result.pending ?? 0}.`);
+  } catch (err) {
+    showBanner(`Falha ao gravar a decisao: ${err.message}`);
+  }
 }
 
 async function loadManual() {
   const data = await api("/api/capabilities");
-
   $("#manual-pipeline").innerHTML = data.pipeline
     .map((stage) => {
       const active = stage.status === "ativo" || stage.status === "parcial";
@@ -1044,6 +1344,33 @@ $("#organize-history-refresh").addEventListener("click", refreshOrganizeHistory)
 $("#organize-config-form").addEventListener("submit", (event) => {
   event.preventDefault();
   saveOrganizeConfig();
+});
+
+$("#download-form").addEventListener("submit", (event) => event.preventDefault());
+
+$("#download-login").addEventListener("submit", (event) => {
+  event.preventDefault();
+  setAdminToken($("#download-token").value.trim());
+  $("#download-token").value = "";
+  run("premium");
+});
+
+$("#download-probe").addEventListener("click", () => startDownloadTask("probe"));
+$("#download-start").addEventListener("click", () => startDownloadTask("download"));
+
+$("#curation-login").addEventListener("submit", (event) => {
+  event.preventDefault();
+  setAdminToken($("#curation-token").value.trim());
+  $("#curation-token").value = "";
+  run("premium");
+});
+
+$("#curation-refresh").addEventListener("click", () => loadCurationPanel());
+
+$("#curation-table").addEventListener("click", (event) => {
+  const button = event.target.closest(".curation-save");
+  if (!button) return;
+  saveCurationDecision(button.dataset.track);
 });
 
 $("#organize-table").addEventListener("change", (event) => {
