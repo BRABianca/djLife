@@ -7,6 +7,7 @@ from pathlib import Path
 from djlife.analysis.base import BACKENDS as ANALYSIS_BACKENDS
 from djlife.analysis.base import DEFAULT_FAST_SECONDS
 from djlife.db import default_db_path
+from djlife.license import default_license_path, default_public_key_path
 from djlife.ml.base import DEFAULT_MIN_SIMILARITY, DEFAULT_NEIGHBORS
 from djlife.ml.base import EMBEDDERS as ML_EMBEDDERS
 
@@ -69,6 +70,20 @@ class MlConfig:
 
 
 @dataclass(frozen=True)
+class LicenseConfig:
+    public_key: Path | None = None
+    license_file: Path | None = None
+
+    @property
+    def public_key_path(self) -> Path:
+        return self.public_key or default_public_key_path()
+
+    @property
+    def license_path(self) -> Path:
+        return self.license_file or default_license_path()
+
+
+@dataclass(frozen=True)
 class Config:
     library: LibraryConfig = field(default_factory=LibraryConfig)
     catalog: CatalogConfig = field(default_factory=CatalogConfig)
@@ -77,6 +92,7 @@ class Config:
     integrations: IntegrationsConfig = field(default_factory=IntegrationsConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     ml: MlConfig = field(default_factory=MlConfig)
+    license: LicenseConfig = field(default_factory=LicenseConfig)
 
     @property
     def db_path(self) -> Path:
@@ -111,6 +127,7 @@ def load_config(path: Path | str | None = None) -> Config:
     integrations = data.get("integrations", {})
     analysis = data.get("analysis", {})
     ml = data.get("ml", {})
+    license_data = data.get("license", {})
 
     strategy = files.get("strategy", FilesConfig.strategy)
     if strategy not in FILE_STRATEGIES:
@@ -174,5 +191,9 @@ def load_config(path: Path | str | None = None) -> Config:
             ),
             neighbors=int(ml.get("neighbors", DEFAULT_NEIGHBORS)),
             min_similarity=float(ml.get("min_similarity", DEFAULT_MIN_SIMILARITY)),
+        ),
+        license=LicenseConfig(
+            public_key=_optional_path(license_data.get("public_key")),
+            license_file=_optional_path(license_data.get("license_file")),
         ),
     )
